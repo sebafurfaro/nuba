@@ -2,6 +2,17 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  AlertDialogBackdrop,
+  AlertDialogBody,
+  AlertDialogCloseTrigger,
+  AlertDialogContainer,
+  AlertDialogDialog,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogHeading,
+  AlertDialogIcon,
+  AlertDialogRoot,
+  AlertDialogTrigger,
   Button,
   Card,
   FieldError,
@@ -14,17 +25,11 @@ import {
   Text,
   TextArea,
 } from "@heroui/react";
-import { ArrowLeft, ImagePlus, Trash2, X } from "lucide-react";
+import { ArrowLeft, ImagePlus, Plus, Trash2, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Controller,
   useFieldArray,
@@ -32,19 +37,16 @@ import {
   type SubmitHandler,
 } from "react-hook-form";
 
-import type { CategoriaOption } from "../productos-client";
+import {
+  categoryTreeToSelectOptions,
+  type CategorySelectOption,
+} from "@/lib/category-select-options";
 import {
   productoCreateFormSchema,
   type ProductoCreateFormInput,
   type ProductoCreateFormValues,
 } from "@/lib/product-create-schema";
-import type { Recipe } from "@/types/recipe";
-
-const money = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-  maximumFractionDigits: 2,
-});
+import type { CategoryTree } from "@/types/category";
 
 const glassStyle = {
   background: "var(--nuba-glass-surface)",
@@ -54,30 +56,78 @@ const glassStyle = {
 const ACCEPT_IMAGE = "image/jpeg,image/png,image/webp";
 const MAX_BYTES = 2 * 1024 * 1024;
 
-type CostPreview = {
-  food_cost: number;
-  food_cost_percentage: number;
-  cost_per_portion: number;
-};
+const UNIDADES: { value: "ml" | "l" | "g" | "kg" | "u" | "porciones"; label: string }[] =
+  [
+    { value: "ml", label: "ml" },
+    { value: "l", label: "l" },
+    { value: "g", label: "g" },
+    { value: "kg", label: "kg" },
+    { value: "u", label: "u" },
+    { value: "porciones", label: "porciones" },
+  ];
 
 type ProductoCrearFormProps = {
   tenantId: string;
+  /** Si se informa, el formulario actúa en modo edición (misma UI que crear). */
+  productId?: string;
 };
 
-export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
+type ApiProductPayload = {
+  product: {
+    id: string;
+    name: string;
+    description: string | null;
+    sku: string | null;
+    image_url: string | null;
+    price: number;
+    discount_price: number | null;
+    stock: number;
+    track_stock: boolean;
+    stock_alert_threshold: number | null;
+    is_active: boolean;
+    recipe_id: string | null;
+    category_id: string | null;
+    portion_size: number;
+    portion_unit: string | null;
+    branch_id: string | null;
+  };
+  variants: {
+    id: string;
+    name: string;
+    sku: string | null;
+    price: number | null;
+    stock: number;
+    is_active?: boolean;
+  }[];
+  categories: CategorySelectOption[];
+};
+
+export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const productCoreRef = useRef<{
+    recipe_id: string | null;
+    portion_size: number;
+    portion_unit: string | null;
+    branch_id: string | null;
+  }>({
+    recipe_id: null,
+    portion_size: 1,
+    portion_unit: null,
+    branch_id: null,
+  });
+  const initialVariantIdsRef = useRef<Set<string>>(new Set());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [initialImageUrl, setInitialImageUrl] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [categories, setCategories] = useState<CategoriaOption[]>([]);
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [categories, setCategories] = useState<CategorySelectOption[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [recipePreview, setRecipePreview] = useState<CostPreview | null>(null);
-  const [recipePreviewLoading, setRecipePreviewLoading] = useState(false);
+  const [skuLocked, setSkuLocked] = useState(false);
 
   const form = useForm<
     ProductoCreateFormInput,
@@ -97,6 +147,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
       stock_alert_threshold: undefined,
       is_active: true,
       recipe_id: "",
+      ingredientes_inline: [],
       variaciones: [],
     },
   });
@@ -106,41 +157,100 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
     name: "variaciones",
   });
 
+  const {
+    fields: ingFields,
+    append: appendIng,
+    remove: removeIng,
+  } = useFieldArray({
+    control: form.control,
+    name: "ingredientes_inline",
+  });
+
   const trackStock = form.watch("track_stock");
-  const recipeId = form.watch("recipe_id");
-  const precio = form.watch("precio");
-  const precioDesc = form.watch("precio_descuento");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoadingMeta(true);
       setLoadError(null);
+
       try {
-        const [prodRes, recRes] = await Promise.all([
-          fetch(`/api/${tenantId}/productos`, { credentials: "include" }),
-          fetch(`/api/${tenantId}/recipes?subRecipe=false`, {
+        if (productId) {
+          const res = await fetch(`/api/${tenantId}/productos/${productId}`, {
             credentials: "include",
-          }),
-        ]);
-        if (!prodRes.ok) {
-          throw new Error("No se pudieron cargar las categorías.");
+          });
+          if (!res.ok) {
+            const j = (await res.json().catch(() => null)) as {
+              error?: string;
+            } | null;
+            if (!cancelled) {
+              setLoadError(j?.error ?? "No se pudo cargar el producto.");
+            }
+            return;
+          }
+          const data = (await res.json()) as ApiProductPayload;
+          const p = data.product;
+          if (cancelled) {
+            return;
+          }
+          productCoreRef.current = {
+            recipe_id: p.recipe_id,
+            portion_size: p.portion_size || 1,
+            portion_unit: p.portion_unit,
+            branch_id: p.branch_id,
+          };
+          setCategories(Array.isArray(data.categories) ? data.categories : []);
+          setInitialImageUrl(p.image_url);
+          setImageRemoved(false);
+          setImageFile(null);
+          setSkuLocked(Boolean(p.sku && String(p.sku).trim() !== ""));
+          initialVariantIdsRef.current = new Set(
+            (data.variants ?? []).map((v) => v.id),
+          );
+          form.reset({
+            nombre: p.name,
+            descripcion: p.description ?? "",
+            sku: p.sku ?? "",
+            categoria_id: p.category_id ?? "",
+            precio: p.price,
+            precio_descuento: p.discount_price ?? undefined,
+            track_stock: p.track_stock,
+            stock: p.stock,
+            stock_alert_threshold: p.stock_alert_threshold ?? undefined,
+            is_active: p.is_active,
+            recipe_id: p.recipe_id ?? "",
+            ingredientes_inline: [],
+            variaciones: (data.variants ?? []).map((v) => ({
+              id: v.id,
+              nombre: v.name,
+              sku: v.sku ?? "",
+              precio: v.price,
+              stock: v.stock,
+            })),
+          });
+        } else {
+          const catRes = await fetch(`/api/${tenantId}/categorias`, {
+            credentials: "include",
+          });
+          if (!catRes.ok) {
+            const j = (await catRes.json().catch(() => null)) as {
+              error?: string;
+            } | null;
+            if (!cancelled) {
+              setLoadError(j?.error ?? "No se pudieron cargar las categorías.");
+            }
+            return;
+          }
+          const tree = (await catRes.json()) as CategoryTree;
+          if (!cancelled) {
+            setCategories(
+              Array.isArray(tree) ? categoryTreeToSelectOptions(tree) : [],
+            );
+          }
         }
-        if (!recRes.ok) {
-          throw new Error("No se pudieron cargar las recetas.");
-        }
-        const prodJson = (await prodRes.json()) as {
-          categories?: CategoriaOption[];
-        };
-        const recJson = (await recRes.json()) as Recipe[];
-        if (cancelled) {
-          return;
-        }
-        setCategories(Array.isArray(prodJson.categories) ? prodJson.categories : []);
-        setRecipes(Array.isArray(recJson) ? recJson : []);
-      } catch (e) {
+      } catch {
         if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : "Error al cargar datos.");
+          setLoadError("Error de red.");
         }
       } finally {
         if (!cancelled) {
@@ -151,7 +261,16 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+    // form.reset es estable en react-hook-form; incluirlo re-disparaba la carga y borraba cambios del usuario.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al cambiar tenant o producto
+  }, [tenantId, productId]);
+
+  const displayImageUrl = useMemo(
+    () =>
+      imagePreviewUrl ??
+      (productId && initialImageUrl && !imageRemoved ? initialImageUrl : null),
+    [imagePreviewUrl, productId, initialImageUrl, imageRemoved],
+  );
 
   useEffect(() => {
     if (!imageFile) {
@@ -163,63 +282,13 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
     return () => URL.revokeObjectURL(url);
   }, [imageFile]);
 
-  useEffect(() => {
-    const rid = typeof recipeId === "string" && recipeId.length > 0 ? recipeId : "";
-    const p = typeof precio === "number" && precio > 0 ? precio : NaN;
-    if (!rid || !Number.isFinite(p)) {
-      setRecipePreview(null);
-      return;
-    }
-    const discount =
-      typeof precioDesc === "number" && precioDesc > 0 ? precioDesc : null;
-    const qs = new URLSearchParams({ price: String(p) });
-    if (discount != null) {
-      qs.set("discount_price", String(discount));
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      setRecipePreviewLoading(true);
-      void (async () => {
-        try {
-          const res = await fetch(
-            `/api/${tenantId}/recipes/${rid}/cost-preview?${qs.toString()}`,
-            { credentials: "include" },
-          );
-          const data = (await res.json().catch(() => null)) as
-            | CostPreview
-            | { error?: string }
-            | null;
-          if (cancelled) {
-            return;
-          }
-          if (!res.ok || !data || "error" in data) {
-            setRecipePreview(null);
-            return;
-          }
-          setRecipePreview(data as CostPreview);
-        } catch {
-          if (!cancelled) {
-            setRecipePreview(null);
-          }
-        } finally {
-          if (!cancelled) {
-            setRecipePreviewLoading(false);
-          }
-        }
-      })();
-    }, 400);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [tenantId, recipeId, precio, precioDesc]);
-
   const setImageFromFile = useCallback((file: File | null) => {
     setImageError(null);
     if (!file) {
       setImageFile(null);
       return;
     }
+    setImageRemoved(false);
     if (!ACCEPT_IMAGE.split(",").includes(file.type)) {
       setImageError("Solo JPG, PNG o WEBP.");
       return;
@@ -230,6 +299,14 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
     }
     setImageFile(file);
   }, []);
+
+  const clearImage = useCallback(() => {
+    if (imageFile) {
+      setImageFromFile(null);
+    } else {
+      setImageRemoved(true);
+    }
+  }, [imageFile, setImageFromFile]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
@@ -252,7 +329,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
         if (imageFile) {
           const fd = new FormData();
           fd.set("file", imageFile);
-          const up = await fetch(`/api/${tenantId}/uploads`, {
+          const up = await fetch(`/api/${tenantId}/subidas`, {
             method: "POST",
             body: fd,
             credentials: "include",
@@ -267,14 +344,177 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
           imageUrl = upJson?.url?.trim() ? upJson.url.trim() : null;
         }
 
+        const rawCat = values.categoria_id;
         const categoria =
-          values.categoria_id && values.categoria_id !== ""
-            ? values.categoria_id
+          typeof rawCat === "string" && rawCat.trim() !== ""
+            ? rawCat.trim()
             : null;
-        const recipe =
-          values.recipe_id && values.recipe_id !== "" ? values.recipe_id : null;
 
-        const body = {
+        if (productId) {
+          let resolvedImage: string | null;
+          if (imageFile) {
+            resolvedImage = imageUrl;
+          } else if (imageRemoved) {
+            resolvedImage = null;
+          } else {
+            resolvedImage =
+              initialImageUrl && String(initialImageUrl).trim() !== ""
+                ? String(initialImageUrl).trim()
+                : null;
+          }
+
+          const core = productCoreRef.current;
+          const putBody = {
+            name: values.nombre.trim(),
+            description:
+              values.descripcion && String(values.descripcion).trim() !== ""
+                ? String(values.descripcion).trim()
+                : null,
+            sku:
+              values.sku && String(values.sku).trim() !== ""
+                ? String(values.sku).trim()
+                : null,
+            category_id: categoria,
+            price: values.precio,
+            discount_price:
+              values.precio_descuento != null &&
+              values.precio_descuento !== undefined
+                ? values.precio_descuento
+                : null,
+            track_stock: values.track_stock,
+            stock: values.track_stock ? (values.stock ?? 0) : 0,
+            stock_alert_threshold:
+              values.track_stock &&
+              values.stock_alert_threshold != null &&
+              values.stock_alert_threshold !== undefined
+                ? values.stock_alert_threshold
+                : null,
+            is_active: values.is_active,
+            recipe_id: core.recipe_id,
+            image_url: resolvedImage,
+            portion_size: core.portion_size || 1,
+            portion_unit: core.portion_unit,
+          };
+
+          const res = await fetch(`/api/${tenantId}/productos/${productId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(putBody),
+          });
+          const json = (await res.json().catch(() => null)) as
+            | { error?: string }
+            | null;
+          if (res.status === 409) {
+            setSubmitError(json?.error ?? "SKU duplicado.");
+            return;
+          }
+          if (!res.ok) {
+            setSubmitError(json?.error ?? "No se pudo actualizar el producto.");
+            return;
+          }
+
+          const initialIds = initialVariantIdsRef.current;
+          const currentIds = new Set(
+            values.variaciones
+              .map((v) => v.id)
+              .filter((id): id is string => Boolean(id)),
+          );
+          for (const oldId of initialIds) {
+            if (!currentIds.has(oldId)) {
+              const del = await fetch(
+                `/api/${tenantId}/productos/${productId}/variaciones/${oldId}`,
+                { method: "DELETE", credentials: "include" },
+              );
+              if (!del.ok) {
+                const dj = (await del.json().catch(() => null)) as {
+                  error?: string;
+                } | null;
+                setSubmitError(
+                  dj?.error ?? "No se pudo eliminar una variación.",
+                );
+                return;
+              }
+            }
+          }
+
+          const nextInitial = new Set<string>();
+          for (let i = 0; i < values.variaciones.length; i++) {
+            const v = values.variaciones[i]!;
+            const payload = {
+              name: v.nombre.trim(),
+              sku:
+                v.sku && String(v.sku).trim() !== ""
+                  ? String(v.sku).trim()
+                  : null,
+              price: v.precio ?? null,
+              stock: v.stock ?? 0,
+            };
+            if (v.id && initialIds.has(v.id)) {
+              const vr = await fetch(
+                `/api/${tenantId}/productos/${productId}/variaciones/${v.id}`,
+                {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify(payload),
+                },
+              );
+              if (!vr.ok) {
+                const vj = (await vr.json().catch(() => null)) as {
+                  error?: string;
+                } | null;
+                setSubmitError(
+                  vj?.error ?? "No se pudo actualizar una variación.",
+                );
+                return;
+              }
+              nextInitial.add(v.id);
+            } else {
+              const vr = await fetch(
+                `/api/${tenantId}/productos/${productId}/variaciones`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  credentials: "include",
+                  body: JSON.stringify(payload),
+                },
+              );
+              const vj = (await vr.json().catch(() => null)) as
+                | { id?: string; error?: string }
+                | null;
+              if (vr.status === 409) {
+                setSubmitError(vj?.error ?? "SKU de variación duplicado.");
+                return;
+              }
+              if (!vr.ok || !vj?.id) {
+                setSubmitError(vj?.error ?? "No se pudo crear una variación.");
+                return;
+              }
+              form.setValue(`variaciones.${i}.id`, vj.id, {
+                shouldValidate: false,
+                shouldDirty: true,
+              });
+              nextInitial.add(vj.id);
+            }
+          }
+          initialVariantIdsRef.current = nextInitial;
+          setInitialImageUrl(resolvedImage);
+          setImageRemoved(false);
+          setImageFile(null);
+          router.refresh();
+          return;
+        }
+
+        const inlineLines = (values.ingredientes_inline ?? []).filter(
+          (row) =>
+            row.nombre &&
+            String(row.nombre).trim() !== "" &&
+            row.cantidad != null &&
+            row.cantidad > 0,
+        );
+
+        const body: Record<string, unknown> = {
           name: values.nombre.trim(),
           description:
             values.descripcion && String(values.descripcion).trim() !== ""
@@ -284,7 +524,6 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
             values.sku && String(values.sku).trim() !== ""
               ? String(values.sku).trim()
               : null,
-          category_id: categoria,
           price: values.precio,
           discount_price:
             values.precio_descuento != null && values.precio_descuento !== undefined
@@ -299,7 +538,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
               ? values.stock_alert_threshold
               : null,
           is_active: values.is_active,
-          recipe_id: recipe,
+          recipe_id: null,
           image_url: imageUrl,
           variants: values.variaciones.map((v) => ({
             name: v.nombre.trim(),
@@ -311,6 +550,18 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
             stock: v.stock ?? 0,
           })),
         };
+
+        if (inlineLines.length > 0) {
+          body.inline_recipe_ingredients = inlineLines.map((row) => ({
+            name: String(row.nombre).trim(),
+            quantity: row.cantidad!,
+            unit: row.unidad,
+          }));
+        }
+
+        if (categoria != null) {
+          body.category_id = categoria;
+        }
 
         const res = await fetch(`/api/${tenantId}/productos`, {
           method: "POST",
@@ -338,17 +589,18 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
         setSubmitting(false);
       }
     },
-    [imageFile, router, tenantId],
+    [
+      form.setValue,
+      imageFile,
+      imageRemoved,
+      initialImageUrl,
+      productId,
+      router,
+      tenantId,
+    ],
   );
 
   const errors = form.formState.errors;
-
-  const recipeLabel = useMemo(() => {
-    if (!recipeId || recipeId === "") {
-      return null;
-    }
-    return recipes.find((r) => r.id === recipeId)?.name ?? null;
-  }, [recipeId, recipes]);
 
   return (
     <div className="flex min-h-[calc(100dvh-8.5rem)] flex-col">
@@ -363,7 +615,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
           <ArrowLeft className="size-5" />
         </Button>
         <Text className="text-xl font-semibold tracking-tight text-foreground">
-          Nuevo producto
+          {productId ? "Editar producto" : "Nuevo producto"}
         </Text>
       </div>
 
@@ -417,65 +669,84 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                     id="sku"
                     variant="secondary"
                     placeholder="Se genera automáticamente"
-                    disabled={loadingMeta}
+                    disabled={loadingMeta || skuLocked}
+                    readOnly={skuLocked}
                     {...form.register("sku")}
                   />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <Label htmlFor="categoria_id">Categoría</Label>
-                  <select
-                    id="categoria_id"
-                    className="h-10 rounded-lg border border-border-subtle bg-background px-3 text-foreground outline-none focus:border-accent"
-                    disabled={loadingMeta}
-                    {...form.register("categoria_id")}
-                  >
-                    <option value="">Sin categoría</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="flex flex-col gap-1">
                     <Label htmlFor="precio">Precio</Label>
-                    <InputGroup.Root variant="secondary">
-                      <InputGroup.Prefix className="text-foreground-muted">
-                        $
-                      </InputGroup.Prefix>
-                      <InputGroup.Input
-                        id="precio"
-                        type="number"
-                        inputMode="decimal"
-                        step="0.01"
-                        min="0"
-                        placeholder="0"
-                        disabled={loadingMeta}
-                        {...form.register("precio")}
-                      />
-                    </InputGroup.Root>
+                    <Controller
+                      control={form.control}
+                      name="precio"
+                      render={({ field }) => (
+                        <InputGroup.Root variant="secondary">
+                          <InputGroup.Prefix className="text-foreground-muted">
+                            $
+                          </InputGroup.Prefix>
+                          <InputGroup.Input
+                            id="precio"
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            placeholder="0"
+                            disabled={loadingMeta}
+                            name={field.name}
+                            ref={field.ref}
+                            onBlur={field.onBlur}
+                            value={
+                              field.value === undefined || field.value === null
+                                ? ""
+                                : String(field.value)
+                            }
+                            onChange={(e) => {
+                              const v = e.currentTarget.value;
+                              field.onChange(v === "" ? undefined : v);
+                            }}
+                          />
+                        </InputGroup.Root>
+                      )}
+                    />
                     {errors.precio?.message ? (
                       <FieldError>{String(errors.precio.message)}</FieldError>
                     ) : null}
                   </div>
                   <div className="flex flex-col gap-1">
                     <Label htmlFor="precio_descuento">Precio con descuento</Label>
-                    <InputGroup.Root variant="secondary">
-                      <InputGroup.Prefix className="text-foreground-muted">
-                        $
-                      </InputGroup.Prefix>
-                      <InputGroup.Input
-                        id="precio_descuento"
-                        type="number"
-                        inputMode="decimal"
-                        step="0.01"
-                        min="0"
-                        placeholder="Opcional"
-                        disabled={loadingMeta}
-                        {...form.register("precio_descuento")}
-                      />
-                    </InputGroup.Root>
+                    <Controller
+                      control={form.control}
+                      name="precio_descuento"
+                      render={({ field }) => (
+                        <InputGroup.Root variant="secondary">
+                          <InputGroup.Prefix className="text-foreground-muted">
+                            $
+                          </InputGroup.Prefix>
+                          <InputGroup.Input
+                            id="precio_descuento"
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            placeholder="Opcional"
+                            disabled={loadingMeta}
+                            name={field.name}
+                            ref={field.ref}
+                            onBlur={field.onBlur}
+                            value={
+                              field.value === undefined || field.value === null
+                                ? ""
+                                : String(field.value)
+                            }
+                            onChange={(e) => {
+                              const v = e.currentTarget.value;
+                              field.onChange(v === "" ? undefined : v);
+                            }}
+                          />
+                        </InputGroup.Root>
+                      )}
+                    />
                     {errors.precio_descuento?.message ? (
                       <FieldError>
                         {errors.precio_descuento.message}
@@ -588,7 +859,9 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                         <th className="px-2 py-2 text-start font-medium">SKU</th>
                         <th className="px-2 py-2 text-start font-medium">Precio</th>
                         <th className="px-2 py-2 text-start font-medium">Stock</th>
-                        <th className="w-12 px-2 py-2" />
+                        <th className="w-12 px-2 py-2 text-end font-medium">
+                          <span className="sr-only">Quitar</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border-subtle">
@@ -652,6 +925,125 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                 )}
               </Card.Content>
             </Card.Root>
+
+            {productId ? (
+              <Card.Root className="border border-border-subtle" style={glassStyle}>
+                <Card.Header>
+                  <Card.Title>Ingredientes</Card.Title>
+                </Card.Header>
+                <Card.Content>
+                  <Text className="text-sm text-foreground-secondary">
+                    La composición por ingredientes solo se puede definir al crear el
+                    producto. Si necesitás cambiarla, contactá a soporte o recreá el
+                    producto.
+                  </Text>
+                </Card.Content>
+              </Card.Root>
+            ) : (
+              <Card.Root className="border border-border-subtle" style={glassStyle}>
+                <Card.Header className="flex flex-row flex-wrap items-center justify-between gap-2">
+                  <Card.Title>Ingredientes (opcional)</Card.Title>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    isDisabled={loadingMeta}
+                    onPress={() =>
+                      appendIng({
+                        nombre: "",
+                        cantidad: 1,
+                        unidad: "g",
+                      })
+                    }
+                  >
+                    <Plus className="size-4 shrink-0" />
+                    Agregar
+                  </Button>
+                </Card.Header>
+                <Card.Content className="flex flex-col gap-3">
+                  <Text className="text-sm text-foreground-secondary">
+                    Opcional: se crea una receta y filas en ingredientes (costo 0 hasta
+                    que los actualices).
+                  </Text>
+                  {ingFields.length === 0 ? (
+                    <Text className="text-sm text-foreground-muted">
+                      Sin ingredientes. Usá &quot;Agregar&quot; si querés cargar la
+                      composición ahora.
+                    </Text>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {ingFields.map((row, index) => (
+                        <div
+                          key={row.id}
+                          className="grid gap-2 rounded-lg border border-border-subtle bg-raised/40 p-3 sm:grid-cols-[1fr_100px_120px_auto]"
+                        >
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`ing-nombre-${index}`}>Nombre</Label>
+                            <Input
+                              id={`ing-nombre-${index}`}
+                              variant="secondary"
+                              placeholder="Ej. Harina 000"
+                              disabled={loadingMeta}
+                              {...form.register(`ingredientes_inline.${index}.nombre`)}
+                            />
+                            {errors.ingredientes_inline?.[index]?.nombre?.message ? (
+                              <FieldError>
+                                {errors.ingredientes_inline[index]?.nombre?.message}
+                              </FieldError>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`ing-cant-${index}`}>Cantidad</Label>
+                            <Input
+                              id={`ing-cant-${index}`}
+                              type="number"
+                              inputMode="decimal"
+                              step="any"
+                              min={0}
+                              variant="secondary"
+                              disabled={loadingMeta}
+                              {...form.register(`ingredientes_inline.${index}.cantidad`)}
+                            />
+                            {errors.ingredientes_inline?.[index]?.cantidad?.message ? (
+                              <FieldError>
+                                {errors.ingredientes_inline[index]?.cantidad?.message}
+                              </FieldError>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <Label htmlFor={`ing-unidad-${index}`}>Unidad</Label>
+                            <select
+                              id={`ing-unidad-${index}`}
+                              className="h-10 rounded-lg border border-border-subtle bg-background px-3 text-foreground outline-none focus:border-accent"
+                              disabled={loadingMeta}
+                              {...form.register(`ingredientes_inline.${index}.unidad`)}
+                            >
+                              {UNIDADES.map((u) => (
+                                <option key={u.value} value={u.value}>
+                                  {u.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex items-end justify-end">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              isIconOnly
+                              aria-label="Quitar ingrediente"
+                              onPress={() => removeIng(index)}
+                            >
+                              <Trash2 className="size-4 text-danger" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card.Content>
+              </Card.Root>
+            )}
           </div>
 
           <div className="flex flex-col gap-6 lg:col-span-1">
@@ -671,7 +1063,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                     e.target.value = "";
                   }}
                 />
-                {!imagePreviewUrl ? (
+                {!displayImageUrl ? (
                   <button
                     type="button"
                     className="flex aspect-square w-full max-w-[280px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border-subtle bg-raised/50 text-foreground-secondary transition-colors hover:border-accent hover:bg-raised"
@@ -690,7 +1082,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                 ) : (
                   <div className="relative aspect-square w-full max-w-[280px] overflow-hidden rounded-xl border border-border-subtle bg-raised">
                     <Image
-                      src={imagePreviewUrl}
+                      src={displayImageUrl}
                       alt="Vista previa"
                       width={560}
                       height={560}
@@ -704,7 +1096,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                       isIconOnly
                       className="absolute end-2 top-2"
                       aria-label="Quitar imagen"
-                      onPress={() => setImageFromFile(null)}
+                      onPress={clearImage}
                     >
                       <X className="size-4" />
                     </Button>
@@ -735,7 +1127,7 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
                       </Text>
                       <SwitchRoot
                         isSelected={field.value}
-                        onChange={field.onChange}
+                        onChange={(selected) => field.onChange(selected)}
                         isDisabled={loadingMeta}
                       >
                         <SwitchControl>
@@ -750,64 +1142,40 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
 
             <Card.Root className="border border-border-subtle" style={glassStyle}>
               <Card.Header>
-                <Card.Title>Receta</Card.Title>
+                <Card.Title>Categoría</Card.Title>
               </Card.Header>
               <Card.Content className="flex flex-col gap-3">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="recipe_id">Asociar receta existente</Label>
+                  <Label htmlFor="categoria_id">Asignar categoría</Label>
                   <select
-                    id="recipe_id"
+                    id="categoria_id"
                     className="h-10 rounded-lg border border-border-subtle bg-background px-3 text-foreground outline-none focus:border-accent"
                     disabled={loadingMeta}
-                    {...form.register("recipe_id")}
+                    {...form.register("categoria_id")}
                   >
-                    <option value="">Sin receta</option>
-                    {recipes.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
+                    <option value="">Sin categoría</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
                       </option>
                     ))}
                   </select>
+                  {!loadingMeta && categories.length === 0 ? (
+                    <Text className="text-sm text-foreground-secondary">
+                      No hay categorías activas.{" "}
+                      <Link
+                        href={`/${tenantId}/panel/categorias`}
+                        className="text-accent underline underline-offset-2 hover:opacity-90"
+                      >
+                        Gestioná categorías
+                      </Link>
+                      .
+                    </Text>
+                  ) : null}
+                  {errors.categoria_id?.message ? (
+                    <FieldError>{String(errors.categoria_id.message)}</FieldError>
+                  ) : null}
                 </div>
-                <Link
-                  href={`/${tenantId}/panel/productos/recetas/crear`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-accent underline-offset-2 hover:underline"
-                >
-                  O crear receta nueva
-                </Link>
-                {recipeId && recipeId !== "" ? (
-                  <div className="rounded-lg border border-border-subtle bg-raised/60 p-3 text-sm">
-                    {recipePreviewLoading ? (
-                      <Text className="text-foreground-muted">Calculando…</Text>
-                    ) : recipePreview ? (
-                      <div className="flex flex-col gap-1">
-                        {recipeLabel ? (
-                          <Text className="font-medium text-foreground">
-                            {recipeLabel}
-                          </Text>
-                        ) : null}
-                        <Text className="text-foreground-secondary">
-                          Costo por unidad:{" "}
-                          <span className="tabular-nums text-foreground">
-                            {money.format(recipePreview.cost_per_portion)}
-                          </span>
-                        </Text>
-                        <Text className="text-foreground-secondary">
-                          Food cost:{" "}
-                          <span className="tabular-nums text-foreground">
-                            {recipePreview.food_cost_percentage.toFixed(1)}%
-                          </span>
-                        </Text>
-                      </div>
-                    ) : (
-                      <Text className="text-foreground-muted">
-                        Ingresá un precio para ver el resumen de costos.
-                      </Text>
-                    )}
-                  </div>
-                ) : null}
               </Card.Content>
             </Card.Root>
           </div>
@@ -818,26 +1186,127 @@ export function ProductoCrearForm({ tenantId }: ProductoCrearFormProps) {
         ) : null}
 
         <footer className="sticky bottom-0 z-20 -mx-4 mt-auto border-t border-border-subtle bg-background/95 px-4 py-4 backdrop-blur-md md:-mx-6 md:px-6">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              isDisabled={submitting}
-              onPress={() => router.push(`/${tenantId}/panel/productos`)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              className="bg-accent text-accent-text hover:bg-accent-hover"
-              isDisabled={loadingMeta || submitting}
-            >
-              Guardar producto
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              {productId ? (
+                <EliminarProductoEditDialog
+                  name={form.watch("nombre") || "este producto"}
+                  isDisabled={submitting || loadingMeta}
+                  onConfirm={async () => {
+                    const res = await fetch(
+                      `/api/${tenantId}/productos/${productId}`,
+                      { method: "DELETE", credentials: "include" },
+                    );
+                    if (!res.ok) {
+                      const j = (await res.json().catch(() => null)) as {
+                        error?: string;
+                      } | null;
+                      throw new Error(j?.error ?? "No se pudo eliminar.");
+                    }
+                    router.push(`/${tenantId}/panel/productos`);
+                    router.refresh();
+                  }}
+                />
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                isDisabled={submitting}
+                onPress={() => router.push(`/${tenantId}/panel/productos`)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                className="bg-accent text-accent-text hover:bg-accent-hover"
+                isDisabled={loadingMeta || submitting}
+              >
+                {productId ? "Guardar cambios" : "Guardar producto"}
+              </Button>
+            </div>
           </div>
         </footer>
       </form>
     </div>
+  );
+}
+
+function EliminarProductoEditDialog({
+  name,
+  isDisabled,
+  onConfirm,
+}: {
+  name: string;
+  isDisabled?: boolean;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [errorLine, setErrorLine] = useState<string | null>(null);
+
+  return (
+    <AlertDialogRoot
+      onOpenChange={(open) => {
+        if (!open) {
+          setErrorLine(null);
+        }
+      }}
+    >
+      <AlertDialogTrigger className="inline-flex">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          isDisabled={isDisabled}
+          className="text-danger"
+        >
+          Desactivar producto
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogBackdrop>
+        <AlertDialogContainer placement="center" size="md">
+          <AlertDialogDialog className="max-w-md">
+            <AlertDialogIcon status="danger" />
+            <AlertDialogHeader>
+              <AlertDialogHeading>Desactivar producto</AlertDialogHeading>
+            </AlertDialogHeader>
+            <AlertDialogBody className="flex flex-col gap-2">
+              <Text className="text-foreground-secondary">
+                ¿Seguro que querés desactivar{" "}
+                <span className="font-semibold text-foreground">{name}</span>? Podés
+                volver a activarlo desde el listado.
+              </Text>
+              {errorLine ? (
+                <Text className="text-sm text-danger">{errorLine}</Text>
+              ) : null}
+            </AlertDialogBody>
+            <AlertDialogFooter className="flex justify-end gap-2">
+              <AlertDialogCloseTrigger>Cancelar</AlertDialogCloseTrigger>
+              <Button
+                variant="danger"
+                isDisabled={busy}
+                onPress={async () => {
+                  setBusy(true);
+                  setErrorLine(null);
+                  try {
+                    await onConfirm();
+                  } catch (e) {
+                    setErrorLine(
+                      e instanceof Error ? e.message : "No se pudo desactivar.",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Desactivar
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogDialog>
+        </AlertDialogContainer>
+      </AlertDialogBackdrop>
+    </AlertDialogRoot>
   );
 }

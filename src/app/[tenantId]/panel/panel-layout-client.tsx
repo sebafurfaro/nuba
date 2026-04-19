@@ -91,7 +91,7 @@ export function PanelLayoutClient({
       {isMobile && mobileNavOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          className="fixed inset-0 z-40 bg-[color:var(--nuba-scrim)] md:hidden"
           aria-label="Cerrar menú"
           onClick={() => setMobileNavOpen(false)}
         />

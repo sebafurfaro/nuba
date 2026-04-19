@@ -38,3 +38,18 @@ export function requireAdminOrSupervisor(role: Role): NextResponse | null {
   }
   return null;
 }
+
+/** Admin, supervisor o vendedor (p. ej. órdenes en salón). */
+export function requireOrderStaff(role: Role): NextResponse | null {
+  if (role !== "admin" && role !== "supervisor" && role !== "vendedor") {
+    return NextResponse.json({ error: "Prohibido" }, { status: 403 });
+  }
+  return null;
+}
+
+export function requireAdmin(role: Role): NextResponse | null {
+  if (role !== "admin") {
+    return NextResponse.json({ error: "Prohibido" }, { status: 403 });
+  }
+  return null;
+}

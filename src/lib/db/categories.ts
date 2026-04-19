@@ -22,6 +22,27 @@ function mapLevel(value: unknown): 0 | 1 {
   return num(value) >= 1 ? 1 : 0;
 }
 
+/** MySQL BOOLEAN/TINYINT puede llegar como 0/1, "0"/"1" o Buffer; no usar `Boolean("0")`. */
+function mapDbBool(value: unknown): boolean {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (value === false || value === 0 || value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "bigint") {
+    return value !== BigInt(0);
+  }
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes";
+  }
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) {
+    return value.length > 0 && value[0] !== 0;
+  }
+  return Boolean(value);
+}
+
 function mapCategory(row: RowDataPacket): Category {
   const c: Category = {
     id: row.id as string,
@@ -32,7 +53,7 @@ function mapCategory(row: RowDataPacket): Category {
     image_url: (row.image_url as string | null) ?? null,
     level: mapLevel(row.level),
     sort_order: num(row.sort_order),
-    is_active: Boolean(row.is_active),
+    is_active: mapDbBool(row.is_active),
     created_at: asIso(row.created_at),
   };
   return c;
@@ -154,6 +175,22 @@ export async function getCategoryTree(tenantId: string): Promise<CategoryTree> {
     root.children = (childrenByParent.get(root.id) ?? []).sort(
       (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
     );
+  }
+
+  const rootIds = new Set(roots.map((r) => r.id));
+  for (const [parentId, kids] of childrenByParent) {
+    if (rootIds.has(parentId)) {
+      continue;
+    }
+    const sorted = [...kids].sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+    );
+    for (const k of sorted) {
+      roots.push({
+        ...k,
+        children: [],
+      });
+    }
   }
 
   roots.sort(

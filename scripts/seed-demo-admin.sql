@@ -1,6 +1,9 @@
 -- Aplicar sobre una base `nuba` ya existente (no corre en docker-entrypoint-initdb por defecto).
 -- Uso: docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/seed-demo-admin.sql
---    o: npm run db:seed
+--    o: npm run db:seed  (alias: npm run bd:seed)
+--
+-- Si MySQL devuelve "Unknown column 'parent_id'": la tabla `categories` es vieja.
+-- Corré antes: npm run db:migrate-categories   (o `npm run db:reset` para recrear el volumen).
 
 SET NAMES utf8mb4;
 
@@ -29,3 +32,30 @@ INSERT IGNORE INTO permissions (id, tenant_id, role_id, resource, can_view, can_
   ('00000000-0000-0000-0000-000000000063', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'clientes', TRUE, TRUE, TRUE, TRUE),
   ('00000000-0000-0000-0000-000000000064', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'usuarios', TRUE, TRUE, TRUE, TRUE),
   ('00000000-0000-0000-0000-000000000065', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'administracion', TRUE, TRUE, TRUE, TRUE);
+
+-- Categorías de demo (idénticas al init): el seed no corre en initdb; sin esto el selector de productos puede quedar vacío.
+INSERT IGNORE INTO categories (id, tenant_id, parent_id, name, level, sort_order, is_active) VALUES
+  ('00000000-0000-0000-0000-000000000040', '00000000-0000-0000-0000-000000000001', NULL, 'Bebidas', 0, 0, TRUE),
+  ('00000000-0000-0000-0000-000000000041', '00000000-0000-0000-0000-000000000001', NULL, 'Comidas', 0, 1, TRUE),
+  ('00000000-0000-0000-0000-000000000042', '00000000-0000-0000-0000-000000000001', NULL, 'Postres', 0, 2, TRUE);
+
+INSERT IGNORE INTO categories (id, tenant_id, parent_id, name, level, sort_order, is_active) VALUES
+  ('00000000-0000-0000-0000-000000000090', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000040', 'Calientes', 1, 0, TRUE),
+  ('00000000-0000-0000-0000-000000000091', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000040', 'Frías', 1, 1, TRUE),
+  ('00000000-0000-0000-0000-000000000092', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000040', 'Alcohólicas', 1, 2, TRUE),
+  ('00000000-0000-0000-0000-000000000093', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000041', 'Entradas', 1, 0, TRUE),
+  ('00000000-0000-0000-0000-000000000094', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000041', 'Principales', 1, 1, TRUE);
+
+UPDATE categories
+SET is_active = TRUE
+WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND id IN (
+    '00000000-0000-0000-0000-000000000040',
+    '00000000-0000-0000-0000-000000000041',
+    '00000000-0000-0000-0000-000000000042',
+    '00000000-0000-0000-0000-000000000090',
+    '00000000-0000-0000-0000-000000000091',
+    '00000000-0000-0000-0000-000000000092',
+    '00000000-0000-0000-0000-000000000093',
+    '00000000-0000-0000-0000-000000000094'
+  );

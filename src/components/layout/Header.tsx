@@ -52,12 +52,12 @@ export function Header({
 
           <Nuba className="flex h-7 w-auto max-w-[min(120px,38vw)] shrink-0 md:hidden sm:max-w-[140px]" />
 
-          <div className="hidden min-w-0 md:block">
+          <div className="hidden min-w-0 md:flex md:space-x-2 md:items-center">
             <Text className="truncate text-[11px] font-semibold uppercase tracking-[0.24em] text-foreground-muted">
               Workspace
             </Text>
             <Text className="truncate text-sm font-semibold text-foreground">
-              Panel <span className="text-foreground-secondary">/ {tenantId}</span>
+              Panel <span className="text-foreground-secondary capitalize">/ {tenantId}</span>
             </Text>
           </div>
         </div>

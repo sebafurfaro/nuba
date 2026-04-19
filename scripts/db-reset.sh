@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 docker compose down -v
-docker compose up -d mysql
+docker compose up -d
 
 echo "Esperando a MySQL y a que termine docker-entrypoint-initdb.d..."
 for _ in $(seq 1 120); do

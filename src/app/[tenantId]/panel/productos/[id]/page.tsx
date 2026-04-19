@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { ProductoDetalleClient } from "./producto-detalle-client";
+import { ProductoCrearForm } from "../crear/producto-crear-form";
 import { getSessionFromCookies } from "@/lib/session";
 
 type PageProps = {
@@ -15,12 +15,9 @@ export default async function ProductoDetallePage({ params }: PageProps) {
       `/login?tenantId=${encodeURIComponent(tenantId)}&returnUrl=${encodeURIComponent(`/${tenantId}/panel/productos/${id}`)}`,
     );
   }
+  if (session.role !== "admin" && session.role !== "supervisor") {
+    redirect(`/${tenantId}/panel/productos`);
+  }
 
-  return (
-    <ProductoDetalleClient
-      tenantId={tenantId}
-      productId={id}
-      role={session.role}
-    />
-  );
+  return <ProductoCrearForm tenantId={tenantId} productId={id} />;
 }

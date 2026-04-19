@@ -391,6 +391,54 @@ export async function getRecipeById(
   };
 }
 
+export type InlineRecipeIngredientLine = {
+  name: string;
+  quantity: number;
+  unit: UnitType;
+};
+
+/**
+ * Dentro de una transacción: crea `recipes`, un `ingredients` por línea y `recipe_items`.
+ * Costo de ingredientes en 0 (solo composición); el producto enlaza `recipe_id`.
+ */
+export async function createInlineRecipeForProductOnConn(
+  conn: PoolConnection,
+  tenantId: string,
+  productName: string,
+  lines: InlineRecipeIngredientLine[],
+): Promise<string> {
+  if (lines.length === 0) {
+    throw new Error("Se requiere al menos un ingrediente");
+  }
+  const recipeId = crypto.randomUUID();
+  const label = `${productName.trim().slice(0, 200)} — ingredientes`.slice(0, 255);
+  await conn.query<ResultSetHeader>(
+    `INSERT INTO recipes (
+      id, tenant_id, name, description, yield_quantity, yield_unit, is_sub_recipe
+    ) VALUES (?, ?, ?, NULL, 1, 'porciones', FALSE)`,
+    [recipeId, tenantId, label],
+  );
+
+  for (const line of lines) {
+    const ingId = crypto.randomUUID();
+    await conn.query<ResultSetHeader>(
+      `INSERT INTO ingredients (
+        id, tenant_id, branch_id, name, unit, unit_cost, stock_quantity,
+        stock_alert_threshold, supplier_id, is_active
+      ) VALUES (?, ?, NULL, ?, ?, 0, 0, NULL, NULL, TRUE)`,
+      [ingId, tenantId, line.name.trim(), line.unit],
+    );
+    const itemId = crypto.randomUUID();
+    await conn.query<ResultSetHeader>(
+      `INSERT INTO recipe_items (
+        id, tenant_id, recipe_id, ingredient_id, sub_recipe_id, quantity, unit, notes
+      ) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL)`,
+      [itemId, tenantId, recipeId, ingId, line.quantity, line.unit],
+    );
+  }
+  return recipeId;
+}
+
 export async function createRecipe(
   tenantId: string,
   data: CreateRecipeData,

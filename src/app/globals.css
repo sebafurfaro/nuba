@@ -51,6 +51,26 @@
   --nuba-accent-hover: #4338ca;
   --nuba-accent-soft: #eef2ff;
   --nuba-accent-text: #ffffff;
+
+  /* Alias semánticos para diálogos y estilos inline (evitan colores fuera de tokens) */
+  --accent: var(--nuba-accent);
+  --success: var(--nuba-success);
+  --warning: var(--nuba-warning);
+  --danger: var(--nuba-danger);
+
+  /* Aliases relevamiento (inline / sustitución de gray-* y hex en UI) */
+  --background-surface: var(--nuba-surface);
+  --background-page: var(--nuba-page);
+  --background-raised: var(--nuba-raised);
+  --foreground: var(--nuba-fg);
+  --foreground-secondary: var(--nuba-fg-secondary);
+  --foreground-muted: var(--nuba-fg-muted);
+  --border-subtle: var(--nuba-border-subtle);
+  --border-default: var(--nuba-border-default);
+  /** Scrim sobre contenido (reemplazo de bg-black/40). */
+  --nuba-scrim: rgb(0 0 0 / 0.4);
+  /** Fallback monocromo para chips sin color de tenant (equiv. gray-500). */
+  --nuba-badge-neutral-bg: #6b7280;
 }
 
 .dark {
@@ -87,6 +107,22 @@
   --nuba-accent-hover: #a5b4fc;
   --nuba-accent-soft: #13124a;
   --nuba-accent-text: #030712;
+
+  --accent: var(--nuba-accent);
+  --success: var(--nuba-success);
+  --warning: var(--nuba-warning);
+  --danger: var(--nuba-danger);
+
+  --background-surface: var(--nuba-surface);
+  --background-page: var(--nuba-page);
+  --background-raised: var(--nuba-raised);
+  --foreground: var(--nuba-fg);
+  --foreground-secondary: var(--nuba-fg-secondary);
+  --foreground-muted: var(--nuba-fg-muted);
+  --border-subtle: var(--nuba-border-subtle);
+  --border-default: var(--nuba-border-default);
+  --nuba-scrim: rgb(0 0 0 / 0.55);
+  --nuba-badge-neutral-bg: #6b7280;
 }
 
 /* Tokens → utilidades Tailwind (bg-background, text-muted, ring-accent, etc.) */

@@ -360,17 +360,70 @@ CREATE TABLE IF NOT EXISTS tables (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
+-- LOCATIONS (canales de venta / puntos de atención por tenant)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS locations (
+  id               VARCHAR(36)  NOT NULL DEFAULT (UUID()),
+  tenant_id        VARCHAR(36)  NOT NULL,
+  branch_id        VARCHAR(36)  NULL,
+  table_id         VARCHAR(36)  NULL,        -- FK a tables si type='table'
+  type             ENUM('table','counter','takeaway','delivery','online')
+                   NOT NULL DEFAULT 'table',
+  name             VARCHAR(100) NOT NULL,    -- "Mesa 1", "Mostrador", "Take away"
+  capacity         INT          NULL,        -- solo para type='table'
+  is_active        BOOLEAN      NOT NULL DEFAULT TRUE,
+  is_reservable    BOOLEAN      NOT NULL DEFAULT FALSE,
+  accepts_queue    BOOLEAN      NOT NULL DEFAULT FALSE, -- múltiples órdenes activas
+  sort_order       INT          NOT NULL DEFAULT 0,
+  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_locations_tenant (tenant_id),
+  INDEX idx_locations_type   (tenant_id, type),
+  CONSTRAINT fk_loc_tenant FOREIGN KEY (tenant_id)  REFERENCES tenants(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_loc_branch FOREIGN KEY (branch_id)  REFERENCES branches(id) ON DELETE SET NULL,
+  CONSTRAINT fk_loc_table  FOREIGN KEY (table_id)   REFERENCES tables(id)   ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- ORDER_STATUSES (pipeline de estados configurable por tenant)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS order_statuses (
+  id              VARCHAR(36)  NOT NULL DEFAULT (UUID()),
+  tenant_id       VARCHAR(36)  NOT NULL,
+  `key`           VARCHAR(50)  NOT NULL,  -- 'pending','in_progress','ready','delivered','closed','cancelled'
+  label           VARCHAR(100) NOT NULL,  -- label custom: "En cocina", "Lista para retirar"
+  color           VARCHAR(7)   NOT NULL DEFAULT '#6b7280',  -- hex del badge
+  sort_order      INT          NOT NULL DEFAULT 0,
+  triggers_stock  BOOLEAN      NOT NULL DEFAULT FALSE,
+  is_terminal     BOOLEAN      NOT NULL DEFAULT FALSE, -- si es estado final (cerrado/cancelado)
+  is_cancellable  BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tenant_status_key (tenant_id, `key`),
+  INDEX idx_order_statuses_tenant (tenant_id),
+  CONSTRAINT fk_os_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
 -- ORDERS (órdenes / comandas)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS orders (
   id              VARCHAR(36)     NOT NULL DEFAULT (UUID()),
   tenant_id       VARCHAR(36)     NOT NULL,
+  location_id     VARCHAR(36)     NULL,
   branch_id       VARCHAR(36)     NULL,
   table_id        VARCHAR(36)     NULL,
   customer_id     VARCHAR(36)     NULL,
   user_id         VARCHAR(36)     NULL,               -- vendedor que tomó la orden
   status          ENUM('pendiente','en_proceso','listo','entregado','cancelado') NOT NULL DEFAULT 'pendiente',
+  status_key      VARCHAR(50)     NOT NULL DEFAULT 'pending',
+  customer_name   VARCHAR(255)    NULL,               -- take away sin cliente registrado
+  customer_phone  VARCHAR(50)     NULL,
+  delivery_address TEXT           NULL,
   type            ENUM('mesa','takeaway','delivery') NOT NULL DEFAULT 'mesa',
   subtotal        DECIMAL(12,2)   NOT NULL DEFAULT 0.00,
   discount        DECIMAL(12,2)   NOT NULL DEFAULT 0.00,
@@ -380,14 +433,16 @@ CREATE TABLE IF NOT EXISTS orders (
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  INDEX idx_orders_tenant   (tenant_id),
-  INDEX idx_orders_table    (table_id),
-  INDEX idx_orders_customer (customer_id),
-  CONSTRAINT fk_orders_tenant   FOREIGN KEY (tenant_id)   REFERENCES tenants(id)   ON DELETE CASCADE,
-  CONSTRAINT fk_orders_branch   FOREIGN KEY (branch_id)   REFERENCES branches(id)  ON DELETE SET NULL,
-  CONSTRAINT fk_orders_table    FOREIGN KEY (table_id)    REFERENCES tables(id)    ON DELETE SET NULL,
-  CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
-  CONSTRAINT fk_orders_user     FOREIGN KEY (user_id)     REFERENCES users(id)     ON DELETE SET NULL
+  INDEX idx_orders_tenant    (tenant_id),
+  INDEX idx_orders_location  (location_id),
+  INDEX idx_orders_table     (table_id),
+  INDEX idx_orders_customer  (customer_id),
+  CONSTRAINT fk_orders_tenant    FOREIGN KEY (tenant_id)    REFERENCES tenants(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_orders_location  FOREIGN KEY (location_id)  REFERENCES locations(id)  ON DELETE SET NULL,
+  CONSTRAINT fk_orders_branch    FOREIGN KEY (branch_id)    REFERENCES branches(id)   ON DELETE SET NULL,
+  CONSTRAINT fk_orders_table     FOREIGN KEY (table_id)     REFERENCES tables(id)     ON DELETE SET NULL,
+  CONSTRAINT fk_orders_customer  FOREIGN KEY (customer_id)  REFERENCES customers(id)  ON DELETE SET NULL,
+  CONSTRAINT fk_orders_user      FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -549,6 +604,23 @@ INSERT INTO tables (id, tenant_id, branch_id, name, capacity) VALUES
   ('00000000-0000-0000-0000-000000000050', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', 'Mesa 1', 4),
   ('00000000-0000-0000-0000-000000000051', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', 'Mesa 2', 2),
   ('00000000-0000-0000-0000-000000000052', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', 'Barra',  6);
+
+-- Estados de orden por defecto (tenant demo)
+INSERT INTO order_statuses (id, tenant_id, `key`, label, color, sort_order, triggers_stock, is_terminal) VALUES
+  ('00000000-0000-0000-0000-0000000000C0', '00000000-0000-0000-0000-000000000001', 'pending',     'Pendiente',            '#6b7280', 0, FALSE, FALSE),
+  ('00000000-0000-0000-0000-0000000000C1', '00000000-0000-0000-0000-000000000001', 'in_progress', 'En cocina',            '#f59e0b', 1, FALSE, FALSE),
+  ('00000000-0000-0000-0000-0000000000C2', '00000000-0000-0000-0000-000000000001', 'ready',       'Listo para entregar',  '#3b82f6', 2, FALSE, FALSE),
+  ('00000000-0000-0000-0000-0000000000C3', '00000000-0000-0000-0000-000000000001', 'delivered',   'Entregado',            '#10b981', 3, TRUE,  FALSE),
+  ('00000000-0000-0000-0000-0000000000C4', '00000000-0000-0000-0000-000000000001', 'closed',      'Cerrado y pagado',     '#8b5cf6', 4, FALSE, TRUE),
+  ('00000000-0000-0000-0000-0000000000C5', '00000000-0000-0000-0000-000000000001', 'cancelled',   'Cancelado',            '#ef4444', 5, FALSE, TRUE);
+
+-- Locations (canales de venta) — tenant demo, sucursal central
+INSERT INTO locations (id, tenant_id, branch_id, table_id, type, name, capacity, is_reservable, sort_order) VALUES
+  ('00000000-0000-0000-0000-0000000000D0', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000050', 'table',    'Mesa 1',    4, TRUE,  0),
+  ('00000000-0000-0000-0000-0000000000D1', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000051', 'table',    'Mesa 2',    2, TRUE,  1),
+  ('00000000-0000-0000-0000-0000000000D2', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000052', 'table',    'Barra',     6, FALSE, 2),
+  ('00000000-0000-0000-0000-0000000000D3', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', NULL,                                    'takeaway', 'Take away', NULL, FALSE, 3),
+  ('00000000-0000-0000-0000-0000000000D4', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', NULL,                                    'delivery', 'Delivery',  NULL, FALSE, 4);
 
 INSERT INTO feature_flags (tenant_id, flag_key, is_enabled) VALUES
   ('00000000-0000-0000-0000-000000000001', 'enable_reservations', TRUE),

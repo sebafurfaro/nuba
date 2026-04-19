@@ -1,0 +1,432 @@
+# Nuba — Cursor Rules
+# Plataforma SaaS multi-tenant para gestión gastronómica
+# Stack: Next.js 15 · TypeScript · Tailwind · HeroUI · mysql2 · NextAuth v5
+
+---
+
+## CONTEXTO GENERAL
+
+Nuba es una plataforma SaaS multi-tenant deployada en Vercel (fullstack)
+con base de datos MySQL en Railway. Cada tenant tiene su propio `slug`
+que actúa como identificador en la URL: `nuba.nodoapp.com.ar/{tenantId}/panel`.
+
+Antes de escribir cualquier código, tené en cuenta:
+- Siempre existe un `tenantId` en contexto. Nunca hagas queries sin filtrar por `tenant_id`.
+- El usuario autenticado tiene `session.user.tenantId` y `session.user.role`.
+- Los roles son: `admin`, `supervisor`, `vendedor`, `cliente`.
+- Los feature flags del tenant controlan qué secciones están habilitadas.
+
+---
+
+## STACK TÉCNICO OBLIGATORIO
+
+### Frontend
+- Next.js App Router con TypeScript estricto
+- Tailwind CSS — usar SIEMPRE variables CSS de `globals.css`, no valores hardcodeados
+- HeroUI para componentes base (Modal, Select, Input, Tabs, etc.)
+- Lucide React para íconos — nunca usar otros icon sets
+- Zustand para estado global
+- react-hook-form + zod para todos los formularios
+- recharts para gráficos
+- @dnd-kit/core y @dnd-kit/sortable para drag & drop
+
+### Backend
+- Next.js API Routes (App Router) con TypeScript
+- mysql2 con pool de conexiones — archivo `src/lib/db.ts`
+- NextAuth v5 con Credentials Provider — auth en `src/auth.ts`
+- Resend para emails transaccionales
+- MercadoPago SDK para pagos
+
+### Variables de entorno disponibles
+- DATABASE_HOST, DATABASE_PORT, DATABASE_USER, DATABASE_PASSWORD, DATABASE_NAME
+- AUTH_SECRET
+- MP_ACCESS_TOKEN, MP_PUBLIC_KEY, MP_WEBHOOK_SECRET
+- RESEND_API_KEY
+- NEXT_PUBLIC_APP_URL
+
+---
+
+## ESTRUCTURA DE CARPETAS — RESPETAR SIEMPRE
+src/
+├── app/
+│   ├── (public)/               ← rutas públicas sin auth
+│   │   ├── page.tsx            ← home de venta
+│   │   ├── onboarding/
+│   │   ├── login/
+│   │   └── [tenantId]/         ← página pública del tenant
+│   ├── [tenantId]/
+│   │   └── panel/              ← panel autenticado
+│   │       ├── layout.tsx
+│   │       ├── page.tsx        ← métricas (home)
+│   │       ├── productos/
+│   │       ├── mesas/
+│   │       ├── clientes/
+│   │       ├── usuarios/
+│   │       ├── sucursales/
+│   │       ├── calendario/
+│   │       ├── proveedores/
+│   │       ├── integraciones/
+│   │       └── administracion/
+│   ├── store/                  ← panel super-admin
+│   └── api/
+│       └── [tenantId]/         ← todas las API routes llevan tenantId
+├── components/
+│   ├── layout/                 ← Aside, Header, NotificationCenter
+│   ├── ui/                     ← Dialog, DialogSuccess, DialogWarning, DialogInfo
+│   └── panel/                  ← MetricCard, DataTable, etc.
+├── lib/
+│   ├── db.ts                   ← pool mysql2
+│   ├── auth.ts                 ← helpers JWT
+│   ├── mercadopago.ts
+│   ├── resend.ts
+│   └── permissions.ts          ← RBAC helper
+├── store/                      ← Zustand stores
+│   ├── authStore.ts
+│   ├── tenantStore.ts
+│   └── notificationStore.ts
+└── types/                      ← tipos TypeScript globales
+
+---
+
+## SISTEMA DE DISEÑO — REGLAS ESTRICTAS
+
+### Variables CSS — SIEMPRE usar estas, nunca colores hardcodeados
+
+```css
+--background          /* página base — Tailwind gray-100 / gray-950 */
+--background-surface  /* cards, aside — gray-50 / gray-900 */
+--background-raised   /* inputs, hover — gray-200 / gray-800 */
+--foreground          /* texto principal — gray-900 / gray-50 */
+--foreground-secondary /* texto secundario — gray-600 / gray-400 */
+--foreground-muted    /* hints, placeholders — gray-400 / gray-600 */
+--border-subtle       /* separadores — gray-200 / gray-800 */
+--border-default      /* bordes de cards — gray-300 / gray-700 */
+--accent              /* color de acento principal */
+--accent-hover        /* acento en hover */
+--accent-soft         /* fondo suave del acento */
+--accent-text         /* texto sobre fondo accent */
+--glass-surface       /* rgba con transparencia para glassmorphism */
+--glass-aside         /* aside con glass */
+--glass-blur          /* valor de backdrop-blur: 20px */
+--glass-blur-sm       /* valor de backdrop-blur: 12px */
+--success / --success-soft
+--warning / --warning-soft
+--danger  / --danger-soft
+```
+
+### Glassmorphism — aplicar en cards y aside
+```tsx
+// Card glass correcta
+<div
+  className="rounded-xl border"
+  style={{
+    background: 'var(--glass-surface)',
+    backdropFilter: 'blur(var(--glass-blur-sm))',
+    borderColor: 'var(--border-subtle)',
+  }}
+>
+```
+
+### Dark mode — SIEMPRE compatible
+- Nunca usar `text-gray-900` directamente — usar `text-[var(--foreground)]`
+- Nunca usar `bg-white` directamente — usar `bg-[var(--background-surface)]`
+- El dark mode se activa con `class="dark"` en `<html>` via next-themes
+
+---
+
+## COMPONENTES DE FEEDBACK — REGLAS CRÍTICAS
+
+### ❌ PROHIBIDO — nunca usar esto para alertas y confirmaciones
+```tsx
+// NO usar alert(), confirm(), prompt() del browser
+alert('Producto eliminado')
+confirm('¿Estás seguro?')
+
+// NO crear <div> de warning o success ad-hoc
+<div className="bg-yellow-100 text-yellow-800">Warning</div>
+
+// NO usar componentes HTML nativos <dialog>
+<dialog open>...</dialog>
+```
+
+### ✅ OBLIGATORIO — usar siempre los componentes de `src/components/ui/`
+
+Para información neutral:
+```tsx
+import { DialogInfo } from '@/components/ui/DialogInfo'
+
+<DialogInfo
+  isOpen={isOpen}
+  onClose={() => setIsOpen(false)}
+  title="Título del mensaje"
+  description="Descripción detallada de lo que pasó."
+/>
+```
+
+Para éxito:
+```tsx
+import { DialogSuccess } from '@/components/ui/DialogSuccess'
+
+<DialogSuccess
+  isOpen={showSuccess}
+  onClose={() => setShowSuccess(false)}
+  title="Producto guardado"
+  description="Los cambios se aplicaron correctamente."
+/>
+```
+
+Para advertencia o confirmación destructiva:
+```tsx
+import { DialogWarning } from '@/components/ui/DialogWarning'
+
+<DialogWarning
+  isOpen={showWarning}
+  onClose={() => setShowWarning(false)}
+  title="¿Confirmar acción?"
+  description="Esta acción no se puede deshacer."
+  confirmLabel="Sí, continuar"
+  cancelLabel="Cancelar"
+  onConfirm={handleConfirm}
+/>
+```
+
+---
+
+## TABLAS — REGLAS DE IMPLEMENTACIÓN
+
+### ✅ Estructura correcta de una tabla en Nuba
+
+Toda tabla debe tener:
+1. Columna de identificación principal (nombre, título, etc.)
+2. Columnas de datos relevantes
+3. Columna de estado si aplica
+4. Columna de acciones — **ver las reglas de acciones abajo**
+
+```tsx
+// Estructura base correcta
+<table className="w-full text-sm">
+  <thead>
+    <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <th className="text-left py-3 px-4 font-medium"
+          style={{ color: 'var(--foreground-muted)' }}>
+        Nombre
+      </th>
+      {/* más columnas */}
+      <th className="text-right py-3 px-4 font-medium"
+          style={{ color: 'var(--foreground-muted)' }}>
+        Acciones
+      </th>
+    </tr>
+  </thead>
+  <tbody>
+    {items.map(item => (
+      <tr
+        key={item.id}
+        style={{ borderBottom: '1px solid var(--border-subtle)' }}
+        className="hover:bg-[var(--background-raised)] transition-colors"
+      >
+        {/* celdas */}
+      </tr>
+    ))}
+  </tbody>
+</table>
+```
+
+### Acciones permitidas en tablas
+
+| Acción | Ícono Lucide | Cuándo incluir |
+|--------|-------------|----------------|
+| Ver detalle | `Eye` | Siempre que exista página de detalle |
+| Editar | `Pencil` | Solo admin y supervisor |
+| Activar/desactivar | `Toggle` / switch | Para campos `is_active` |
+| Eliminar | `Trash2` | **Ver regla abajo** |
+
+### ❌ REGLA CRÍTICA DE DELETE
+
+**Nunca agregar botón de eliminar en una tabla sin confirmación explícita.**
+
+El flujo obligatorio para cualquier eliminación es:
+1. Click en `Trash2` → abre `DialogWarning` con descripción del impacto
+2. El usuario confirma en el dialog
+3. Recién entonces se ejecuta el DELETE al API
+4. Si el API devuelve error (ej: 409 tiene dependencias) → mostrar `DialogWarning` con el mensaje del error
+
+```tsx
+// ✅ Correcto
+const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
+<button onClick={() => setDeleteTarget(item.id)}>
+  <Trash2 size={16} />
+</button>
+
+<DialogWarning
+  isOpen={!!deleteTarget}
+  onClose={() => setDeleteTarget(null)}
+  title="Eliminar producto"
+  description={`¿Querés eliminar "${item.name}"? Esta acción no se puede deshacer.`}
+  confirmLabel="Sí, eliminar"
+  onConfirm={() => handleDelete(deleteTarget!)}
+/>
+```
+
+### ❌ PROHIBIDO en tablas
+```tsx
+// NO — delete sin confirmación
+<button onClick={() => handleDelete(item.id)}>Eliminar</button>
+
+// NO — confirm nativo del browser
+<button onClick={() => {
+  if (confirm('¿Estás seguro?')) handleDelete(item.id)
+}}>
+
+// NO — mostrar todos los detalles del item en la tabla
+// Las tablas son resúmenes, el detalle va en la página /[id]
+```
+
+---
+
+## API ROUTES — REGLAS
+
+### Estructura obligatoria de cada route
+
+```ts
+import { auth } from '@/auth'
+import { NextRequest, NextResponse } from 'next/server'
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { tenantId: string } }
+) {
+  // 1. Verificar sesión
+  const session = await auth()
+  if (!session) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  }
+
+  // 2. Verificar que el tenantId del token coincide con el de la URL
+  if (session.user.tenantId !== params.tenantId) {
+    return NextResponse.json({ error: 'Acceso denegado' }, { status: 403 })
+  }
+
+  // 3. Verificar rol si la acción lo requiere
+  if (!['admin', 'supervisor'].includes(session.user.role)) {
+    return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
+  }
+
+  // 4. Lógica de negocio
+  try {
+    // ...
+  } catch (error) {
+    console.error('[GET /api/...]', error)
+    return NextResponse.json(
+      { error: 'Error interno del servidor' },
+      { status: 500 }
+    )
+  }
+}
+```
+
+### Respuestas de error — códigos obligatorios
+- `400` — validación fallida (body malformado, datos inválidos)
+- `401` — sin sesión
+- `403` — sesión válida pero sin permisos
+- `404` — recurso no encontrado
+- `409` — conflicto (email duplicado, tiene dependencias, no se puede eliminar)
+- `500` — error interno
+
+---
+
+## QUERIES MYSQL — REGLAS
+
+### Siempre filtrar por tenant_id primero
+
+```ts
+// ✅ Correcto
+const [rows] = await pool.execute(
+  'SELECT * FROM products WHERE tenant_id = ? AND id = ?',
+  [tenantId, id]
+)
+
+// ❌ Incorrecto — nunca consultar sin tenant_id
+const [rows] = await pool.execute(
+  'SELECT * FROM products WHERE id = ?',
+  [id]
+)
+```
+
+### Transacciones para operaciones críticas
+
+```ts
+const conn = await pool.getConnection()
+try {
+  await conn.beginTransaction()
+  // operaciones...
+  await conn.commit()
+} catch (error) {
+  await conn.rollback()
+  throw error
+} finally {
+  conn.release()
+}
+```
+
+---
+
+## FORMULARIOS — REGLAS
+
+- Siempre usar `react-hook-form` + `zod`
+- Nunca usar `useState` para manejar el estado de un formulario
+- Siempre mostrar errores de validación inline bajo cada campo
+- El botón de submit debe estar deshabilitado mientras `isSubmitting === true`
+- Al éxito: mostrar `DialogSuccess`, nunca `alert()`
+- Al error de API: mostrar `DialogWarning` con el mensaje del error
+
+---
+
+## RUTAS DEL PANEL — MAPA COMPLETO
+/{tenantId}/panel                    ← métricas / home
+/{tenantId}/panel/productos          ← listado de productos
+/{tenantId}/panel/productos/crear    ← nuevo producto
+/{tenantId}/panel/productos/[id]     ← detalle/edición
+/{tenantId}/panel/productos/categorias ← gestión de categorías
+/{tenantId}/panel/mesas              ← órdenes activas (mapa + kanban)
+/{tenantId}/panel/clientes           ← listado de clientes
+/{tenantId}/panel/clientes/[id]      ← perfil del cliente
+/{tenantId}/panel/usuarios           ← gestión de usuarios y roles
+/{tenantId}/panel/sucursales         ← gestión de sucursales
+/{tenantId}/panel/calendario         ← reservas de mesas
+/{tenantId}/panel/proveedores        ← gestión de proveedores
+/{tenantId}/panel/integraciones      ← MercadoPago y otras
+/{tenantId}/panel/administracion     ← configuración general
+/store                               ← super-admin (solo Nuba interno)
+
+---
+
+## CONVENCIONES DE NOMENCLATURA
+
+- Archivos de componentes: `PascalCase.tsx`
+- Archivos de utilidades y queries: `camelCase.ts`
+- Variables y funciones: `camelCase`
+- Tipos e interfaces: `PascalCase`
+- Constantes globales: `UPPER_SNAKE_CASE`
+- Clases CSS: `kebab-case`
+- Tablas MySQL: `snake_case`
+- Columnas MySQL: `snake_case`
+
+---
+
+## ANTES DE GENERAR CUALQUIER CÓDIGO — CHECKLIST
+
+Antes de escribir código, verificá mentalmente:
+
+- [ ] ¿La query filtra por `tenant_id`?
+- [ ] ¿La API route verifica sesión y rol?
+- [ ] ¿Los colores usan variables CSS de `globals.css`?
+- [ ] ¿Los formularios usan `react-hook-form` + `zod`?
+- [ ] ¿Las alertas y confirmaciones usan `DialogInfo`, `DialogSuccess` o `DialogWarning`?
+- [ ] ¿Los deletes tienen confirmación con `DialogWarning` antes de ejecutarse?
+- [ ] ¿Los íconos son de Lucide React?
+- [ ] ¿El componente es compatible con dark mode?
+- [ ] ¿La ruta respeta el mapa de rutas del panel?
+- [ ] ¿El archivo está en la carpeta correcta según la estructura?
+

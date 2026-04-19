@@ -73,6 +73,11 @@ export function panelNavItemsForRole(
       section: "categorias",
     },
     { href: `${base}/mesas`, label: "Mesas", section: "mesas" },
+    {
+      href: `${base}/ubicaciones`,
+      label: "Ubicaciones",
+      section: "ubicaciones",
+    },
     { href: `${base}/clientes`, label: "Clientes", section: "clientes" },
     { href: `${base}/usuarios`, label: "Usuarios", section: "usuarios" },
     { href: `${base}/sucursales`, label: "Sucursales", section: "sucursales" },

@@ -20,7 +20,7 @@ export function Nb({ className }: NbProps) {
         width="56"
         height="56"
         rx="14"
-        className="fill-zinc-900 dark:fill-zinc-100"
+        className="fill-foreground"
       />
       <text
         x="8"
@@ -29,7 +29,7 @@ export function Nb({ className }: NbProps) {
         fontSize="26"
         fontWeight="400"
         letterSpacing="-1"
-        className="fill-zinc-100 dark:fill-zinc-900"
+        className="fill-surface"
       >
         nb
       </text>

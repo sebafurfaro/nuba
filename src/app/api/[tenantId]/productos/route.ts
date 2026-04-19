@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { z } from "zod";
 
 import {
   getTenantSession,
   requireAdminOrSupervisor,
 } from "@/lib/api-tenant-session";
-import { pool } from "@/lib/db";
-import { calculateRecipeCost } from "@/lib/db/recipes";
+import { categoryTreeToSelectOptions } from "@/lib/category-select-options";
+import { getCategoryTree } from "@/lib/db/categories";
+import { createProduct, getProducts } from "@/lib/db/products";
+import type { UnitType } from "@/types/ingredient";
 
 type Ctx = { params: Promise<{ tenantId: string }> };
 
@@ -20,12 +21,27 @@ const createVariantSchema = z.object({
   stock: z.number().int().min(0),
 });
 
+const inlineRecipeIngredientSchema = z.object({
+  name: z.string().min(1).max(255),
+  quantity: z.number().positive(),
+  unit: unitEnum,
+});
+
 const createProductSchema = z
   .object({
     name: z.string().min(1).max(255),
     description: z.string().max(10000).nullable().optional(),
     sku: z.string().max(100).nullable().optional(),
-    category_id: z.string().uuid().nullable().optional(),
+    category_id: z.preprocess(
+      (v) => {
+        if (v == null || v === "") {
+          return null;
+        }
+        const s = typeof v === "string" ? v.trim() : v;
+        return s === "" ? null : s;
+      },
+      z.union([z.string().uuid(), z.null()]).optional(),
+    ),
     price: z.number().positive(),
     discount_price: z.number().positive().nullable().optional(),
     track_stock: z.boolean(),
@@ -33,6 +49,11 @@ const createProductSchema = z
     stock_alert_threshold: z.number().int().min(0).nullable().optional(),
     is_active: z.boolean(),
     recipe_id: z.string().uuid().nullable().optional(),
+    /** Si viene con ítems, se crea receta + ingredientes nuevos y se ignora `recipe_id`. */
+    inline_recipe_ingredients: z
+      .array(inlineRecipeIngredientSchema)
+      .max(40)
+      .optional(),
     branch_id: z.string().uuid().nullable().optional(),
     image_url: z.string().max(2000).nullable().optional(),
     portion_size: z.number().positive().optional(),
@@ -57,11 +78,6 @@ const createProductSchema = z
     }
   });
 
-function num(v: unknown): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
 export async function GET(_request: Request, ctx: Ctx) {
   const { tenantId: tenantSlug } = await ctx.params;
   const gate = await getTenantSession(tenantSlug);
@@ -69,92 +85,17 @@ export async function GET(_request: Request, ctx: Ctx) {
     return gate;
   }
 
-  const [catRows] = await pool.query<RowDataPacket[]>(
-    `SELECT id, name FROM categories
-     WHERE tenant_id = ? AND is_active = TRUE
-     ORDER BY name ASC`,
-    [gate.tenantUuid],
-  );
-
-  const [prodRows] = await pool.query<RowDataPacket[]>(
-    `SELECT p.id, p.name, p.sku, p.image_url, p.price, p.discount_price, p.stock,
-            p.track_stock, p.is_active, p.recipe_id, p.category_id, p.portion_size,
-            c.name AS category_name
-     FROM products p
-     LEFT JOIN categories c ON c.id = p.category_id AND c.tenant_id = p.tenant_id
-     WHERE p.tenant_id = ?
-     ORDER BY p.name ASC`,
-    [gate.tenantUuid],
-  );
-
-  const categories = catRows.map((r) => ({
-    id: r.id as string,
-    name: r.name as string,
-  }));
-
-  const products = [];
-  for (const r of prodRows) {
-    let food_cost_percentage: number | null = null;
-    const recipeId = r.recipe_id as string | null;
-    if (recipeId) {
-      try {
-        const costs = await calculateRecipeCost(gate.tenantUuid, recipeId);
-        const portionSize = num(r.portion_size) || 1;
-        const food_cost = costs.cost_per_portion * portionSize;
-        const priceNum = num(
-          r.discount_price != null ? r.discount_price : r.price,
-        );
-        food_cost_percentage =
-          priceNum > 0 ? (food_cost / priceNum) * 100 : 0;
-      } catch {
-        food_cost_percentage = null;
-      }
-    }
-
-    products.push({
-      id: r.id as string,
-      name: r.name as string,
-      sku: (r.sku as string | null) ?? null,
-      image_url: (r.image_url as string | null) ?? null,
-      price: num(r.price),
-      discount_price:
-        r.discount_price == null ? null : num(r.discount_price),
-      stock: num(r.stock),
-      track_stock: Boolean(r.track_stock),
-      is_active: Boolean(r.is_active),
-      recipe_id: recipeId,
-      category_id: (r.category_id as string | null) ?? null,
-      category_name: (r.category_name as string | null) ?? null,
-      food_cost_percentage,
-    });
-  }
-
-  return NextResponse.json({ products, categories });
-}
-
-async function assertFk(
-  conn: PoolConnection,
-  tenantUuid: string,
-  categoryId: string | null | undefined,
-  recipeId: string | null | undefined,
-): Promise<void> {
-  if (categoryId) {
-    const [c] = await conn.query<RowDataPacket[]>(
-      `SELECT id FROM categories WHERE id = ? AND tenant_id = ? LIMIT 1`,
-      [categoryId, tenantUuid],
+  try {
+    const products = await getProducts(gate.tenantUuid);
+    const categoryTree = await getCategoryTree(gate.tenantUuid);
+    const categories = categoryTreeToSelectOptions(categoryTree);
+    return NextResponse.json({ products, categories });
+  } catch (e) {
+    console.error("[GET productos]", e);
+    return NextResponse.json(
+      { error: "Error al listar productos" },
+      { status: 500 },
     );
-    if (!c.length) {
-      throw new Error("Categoría inválida");
-    }
-  }
-  if (recipeId) {
-    const [r] = await conn.query<RowDataPacket[]>(
-      `SELECT id FROM recipes WHERE id = ? AND tenant_id = ? LIMIT 1`,
-      [recipeId, tenantUuid],
-    );
-    if (!r.length) {
-      throw new Error("Receta inválida");
-    }
   }
 }
 
@@ -178,72 +119,33 @@ export async function POST(request: Request, ctx: Ctx) {
     );
   }
   const b = parsed.data;
-  const skuNorm =
-    b.sku && String(b.sku).trim() !== "" ? String(b.sku).trim() : null;
-  const stockVal = b.track_stock ? (b.stock ?? 0) : 0;
-  const portionSize = b.portion_size ?? 1;
-  const imageNorm =
-    b.image_url && String(b.image_url).trim() !== ""
-      ? String(b.image_url).trim()
-      : null;
 
-  const conn = await pool.getConnection();
-  const productId = crypto.randomUUID();
+  let productId: string;
   try {
-    await conn.beginTransaction();
-    await assertFk(conn, gate.tenantUuid, b.category_id ?? null, b.recipe_id ?? null);
-
-    await conn.query<ResultSetHeader>(
-      `INSERT INTO products (
-        id, tenant_id, branch_id, category_id, recipe_id, name, description, image_url,
-        sku, price, discount_price, stock, track_stock, stock_alert_threshold,
-        portion_size, portion_unit, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        productId,
-        gate.tenantUuid,
-        b.branch_id ?? null,
-        b.category_id ?? null,
-        b.recipe_id ?? null,
-        b.name,
-        b.description ?? null,
-        imageNorm,
-        skuNorm,
-        b.price,
-        b.discount_price ?? null,
-        stockVal,
-        b.track_stock,
-        b.stock_alert_threshold ?? null,
-        portionSize,
-        b.portion_unit ?? null,
-        b.is_active,
-      ],
-    );
-
-    const variants = b.variants ?? [];
-    for (const v of variants) {
-      const vid = crypto.randomUUID();
-      const vsku =
-        v.sku && String(v.sku).trim() !== "" ? String(v.sku).trim() : null;
-      await conn.query<ResultSetHeader>(
-        `INSERT INTO product_variants (
-          id, tenant_id, product_id, name, sku, price, stock, is_active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
-        [
-          vid,
-          gate.tenantUuid,
-          productId,
-          v.name,
-          vsku,
-          v.price ?? null,
-          v.stock,
-        ],
-      );
-    }
-
-    await conn.commit();
+    productId = await createProduct(gate.tenantUuid, {
+      name: b.name,
+      description: b.description ?? null,
+      sku: b.sku ?? null,
+      category_id: b.category_id ?? null,
+      price: b.price,
+      discount_price: b.discount_price ?? null,
+      track_stock: b.track_stock,
+      stock: b.stock,
+      stock_alert_threshold: b.stock_alert_threshold ?? null,
+      is_active: b.is_active,
+      recipe_id: b.recipe_id ?? null,
+      inline_recipe_ingredients: b.inline_recipe_ingredients?.map((row) => ({
+        name: row.name,
+        quantity: row.quantity,
+        unit: row.unit as UnitType,
+      })),
+      branch_id: b.branch_id ?? null,
+      image_url: b.image_url ?? null,
+      portion_size: b.portion_size,
+      portion_unit: b.portion_unit ?? null,
+      variants: b.variants,
+    });
   } catch (e) {
-    await conn.rollback();
     const msg = e instanceof Error ? e.message : "";
     const code = (e as { code?: string })?.code;
     if (code === "ER_DUP_ENTRY") {
@@ -257,8 +159,6 @@ export async function POST(request: Request, ctx: Ctx) {
     }
     console.error("[POST productos]", e);
     return NextResponse.json({ error: "Error al crear producto" }, { status: 500 });
-  } finally {
-    conn.release();
   }
 
   return NextResponse.json({ id: productId }, { status: 201 });

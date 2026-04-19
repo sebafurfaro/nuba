@@ -17,6 +17,17 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  AlertDialogBackdrop,
+  AlertDialogBody,
+  AlertDialogCloseTrigger,
+  AlertDialogContainer,
+  AlertDialogDialog,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogHeading,
+  AlertDialogIcon,
+  AlertDialogRoot,
+  AlertDialogTrigger,
   BadgeLabel,
   BadgeRoot,
   Button,
@@ -35,10 +46,12 @@ import {
 } from "@heroui/react";
 import { useOverlayState } from "@heroui/react";
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   GripVertical,
   ImagePlus,
+  Info,
   Layers,
   Pencil,
   Plus,
@@ -46,9 +59,16 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Controller, useForm } from "react-hook-form";
 
+import { PanelPageHeader } from "@/components/panel/PanelPageHeader";
 import {
   categoryFormSchema,
   type CategoryFormValues,
@@ -80,7 +100,7 @@ function SortableParentRow({
   onToggle,
   onEdit,
   onAddChild,
-  onDelete,
+  deleteControl,
   canMutate,
 }: {
   node: CategoryWithChildren;
@@ -88,7 +108,7 @@ function SortableParentRow({
   onToggle: () => void;
   onEdit: () => void;
   onAddChild: () => void;
-  onDelete: () => void;
+  deleteControl: ReactNode | null;
   canMutate: boolean;
 }) {
   const {
@@ -181,15 +201,7 @@ function SortableParentRow({
             >
               <Plus className="size-4" />
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              isIconOnly
-              aria-label="Eliminar"
-              onPress={onDelete}
-            >
-              <Trash2 className="size-4 text-danger" />
-            </Button>
+            {deleteControl}
           </div>
         ) : null}
       </div>
@@ -200,12 +212,12 @@ function SortableParentRow({
 function SortableChildRow({
   cat,
   onEdit,
-  onDelete,
+  deleteControl,
   canMutate,
 }: {
   cat: Category;
   onEdit: () => void;
-  onDelete: () => void;
+  deleteControl: ReactNode | null;
   canMutate: boolean;
 }) {
   const {
@@ -281,19 +293,142 @@ function SortableChildRow({
             >
               <Pencil className="size-4" />
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              isIconOnly
-              aria-label="Eliminar"
-              onPress={onDelete}
-            >
-              <Trash2 className="size-4 text-danger" />
-            </Button>
+            {deleteControl}
           </div>
         ) : null}
       </div>
     </div>
+  );
+}
+
+function DeleteCategoriaDialog({
+  categoryName,
+  onConfirm,
+}: {
+  categoryName: string;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [errorLine, setErrorLine] = useState<string | null>(null);
+
+  return (
+    <AlertDialogRoot
+      onOpenChange={(open) => {
+        if (!open) {
+          setErrorLine(null);
+        }
+      }}
+    >
+      <AlertDialogTrigger className="inline-flex">
+        <Button
+          size="sm"
+          variant="ghost"
+          isIconOnly
+          aria-label="Eliminar categoría"
+          className="text-danger"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogBackdrop>
+        <AlertDialogContainer placement="center" size="md">
+          <AlertDialogDialog className="max-w-md">
+            <AlertDialogIcon status="danger" />
+            <AlertDialogHeader>
+              <AlertDialogHeading>Eliminar categoría</AlertDialogHeading>
+            </AlertDialogHeader>
+            <AlertDialogBody className="flex flex-col gap-2">
+              <Text className="text-foreground-secondary">
+                ¿Seguro que querés eliminar{" "}
+                <span className="font-semibold text-foreground">{categoryName}</span>
+                ?
+              </Text>
+              {errorLine ? (
+                <Text className="text-sm text-danger">{errorLine}</Text>
+              ) : null}
+            </AlertDialogBody>
+            <AlertDialogFooter className="flex justify-end gap-2">
+              <AlertDialogCloseTrigger>Cancelar</AlertDialogCloseTrigger>
+              <Button
+                variant="danger"
+                isDisabled={busy}
+                onPress={async () => {
+                  setBusy(true);
+                  setErrorLine(null);
+                  try {
+                    await onConfirm();
+                  } catch (e) {
+                    setErrorLine(
+                      e instanceof Error ? e.message : "No se pudo eliminar.",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Eliminar
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogDialog>
+        </AlertDialogContainer>
+      </AlertDialogBackdrop>
+    </AlertDialogRoot>
+  );
+}
+
+type FeedbackKind = "success" | "info";
+
+function CategoryFeedbackModal({
+  state,
+  payload,
+  onDismiss,
+}: {
+  state: ReturnType<typeof useOverlayState>;
+  payload: { kind: FeedbackKind; title: string; description?: string } | null;
+  onDismiss: () => void;
+}) {
+  if (!payload) {
+    return null;
+  }
+  const Icon = payload.kind === "success" ? CheckCircle2 : Info;
+  const iconClass =
+    payload.kind === "success" ? "text-success" : "text-accent";
+
+  const portalTarget =
+    typeof document !== "undefined" ? document.body : undefined;
+
+  return (
+    <Modal.Root state={state}>
+      <Modal.Backdrop
+        className="z-[200] flex items-center justify-center p-4"
+        UNSTABLE_portalContainer={portalTarget}
+      >
+        <Modal.Container placement="center" size="md">
+          <Modal.Dialog className="max-w-md">
+            <Modal.Header className="flex flex-row items-start gap-3 border-0 pb-2">
+              <Icon className={`size-10 shrink-0 ${iconClass}`} aria-hidden />
+              <Modal.Heading className="flex-1 pt-1">{payload.title}</Modal.Heading>
+            </Modal.Header>
+            {payload.description ? (
+              <Modal.Body className="pt-0">
+                <Text className="text-sm text-foreground-secondary">
+                  {payload.description}
+                </Text>
+              </Modal.Body>
+            ) : null}
+            <Modal.Footer className="flex justify-end border-t border-border-subtle pt-4">
+              <Button
+                variant="primary"
+                className="bg-accent text-accent-text hover:bg-accent-hover"
+                onPress={onDismiss}
+              >
+                Aceptar
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal.Root>
   );
 }
 
@@ -320,12 +455,25 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
   const [imageError, setImageError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const deleteModal = useOverlayState();
-  const [deleteTarget, setDeleteTarget] = useState<{
-    id: string;
-    name: string;
+  const feedbackModal = useOverlayState();
+  const [feedbackPayload, setFeedbackPayload] = useState<{
+    kind: FeedbackKind;
+    title: string;
+    description?: string;
   } | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const dismissFeedback = useCallback(() => {
+    feedbackModal.close();
+    setFeedbackPayload(null);
+  }, [feedbackModal]);
+
+  const showFeedback = useCallback(
+    (kind: FeedbackKind, title: string, description?: string) => {
+      setFeedbackPayload({ kind, title, description });
+      feedbackModal.open();
+    },
+    [feedbackModal],
+  );
 
   const form = useForm<CategoryFormValues>({
     resolver: zodResolver(categoryFormSchema),
@@ -384,7 +532,7 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
   const persistSort = useCallback(
     async (items: { id: string; sort_order: number }[]) => {
       try {
-        const res = await fetch(`/api/${tenantId}/categorias/sort`, {
+        const res = await fetch(`/api/${tenantId}/categorias/ordenar`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -396,12 +544,17 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
           await loadTree();
           return;
         }
+        showFeedback(
+          "info",
+          "Orden actualizado",
+          "El orden de las categorías se guardó correctamente.",
+        );
       } catch {
         toast.danger("Error de red al guardar orden.");
         await loadTree();
       }
     },
-    [loadTree, tenantId],
+    [loadTree, tenantId, showFeedback],
   );
 
   const handleDragEnd = useCallback(
@@ -507,6 +660,40 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
     });
   }, [form]);
 
+  const runDeleteCategory = useCallback(
+    async (id: string) => {
+      const res = await fetch(`/api/${tenantId}/categorias/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.status === 409) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(j?.error ?? "No se puede eliminar.");
+      }
+      if (!res.ok && res.status !== 204) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(j?.error ?? "Error al eliminar.");
+      }
+      if (editId === id) {
+        closePanel();
+      }
+      await loadTree();
+      // Esperar un frame tras cerrar el AlertDialog para no apilar overlays ni
+      // dejar el scroll del `main` en un estado raro antes del modal de éxito.
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 0);
+        });
+      });
+      showFeedback(
+        "success",
+        "Categoría eliminada",
+        "La categoría se quitó del árbol.",
+      );
+    },
+    [tenantId, editId, closePanel, loadTree, showFeedback],
+  );
+
   const displayImageSrc = imageRemoved
     ? null
     : imagePreviewUrl ?? initialImageUrl;
@@ -540,7 +727,7 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
       } else if (imageFile) {
         const fd = new FormData();
         fd.set("file", imageFile);
-        const up = await fetch(`/api/${tenantId}/uploads`, {
+        const up = await fetch(`/api/${tenantId}/subidas`, {
           method: "POST",
           body: fd,
           credentials: "include",
@@ -580,6 +767,9 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
         body.image_url = imageUrl;
       }
 
+      let successTitle: string | null = null;
+      let successDescription: string | undefined;
+
       if (panelMode === "create") {
         const res = await fetch(`/api/${tenantId}/categorias`, {
           method: "POST",
@@ -592,7 +782,8 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
           toast.danger(j?.error ?? "No se pudo crear.");
           return;
         }
-        toast.success("Categoría creada.");
+        successTitle = "Categoría creada";
+        successDescription = "La categoría ya está en el árbol.";
       } else if (panelMode === "edit" && editId) {
         const res = await fetch(`/api/${tenantId}/categorias/${editId}`, {
           method: "PUT",
@@ -605,52 +796,18 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
           toast.danger(j?.error ?? "No se pudo guardar.");
           return;
         }
-        toast.success("Cambios guardados.");
+        successTitle = "Cambios guardados";
+        successDescription = "Los datos se actualizaron correctamente.";
       }
       closePanel();
       await loadTree();
+      if (successTitle) {
+        showFeedback("success", successTitle, successDescription);
+      }
     } catch {
       toast.danger("Error de red.");
     }
   });
-
-  const openDelete = (id: string, name: string) => {
-    setDeleteTarget({ id, name });
-    setDeleteError(null);
-    deleteModal.open();
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteTarget || !canMutate) {
-      return;
-    }
-    setDeleteError(null);
-    try {
-      const res = await fetch(`/api/${tenantId}/categorias/${deleteTarget.id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (res.status === 409) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setDeleteError(j?.error ?? "No se puede eliminar.");
-        return;
-      }
-      if (!res.ok && res.status !== 204) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setDeleteError(j?.error ?? "Error al eliminar.");
-        return;
-      }
-      deleteModal.close();
-      setDeleteTarget(null);
-      toast.success("Categoría eliminada.");
-      if (editId === deleteTarget.id) {
-        closePanel();
-      }
-      await loadTree();
-    } catch {
-      setDeleteError("Error de red.");
-    }
-  };
 
   const panelVisible = panelMode !== "idle";
   const errors = form.formState.errors;
@@ -658,21 +815,21 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Text className="text-2xl font-semibold tracking-tight text-foreground">
-          Categorías
-        </Text>
-        {canMutate ? (
-          <Button
-            variant="primary"
-            className="bg-accent text-accent-text hover:bg-accent-hover"
-            onPress={() => openCreate()}
-          >
-            <Plus className="size-4 shrink-0" />
-            Nueva categoría
-          </Button>
-        ) : null}
-      </div>
+      <PanelPageHeader
+        title="Categorías"
+        end={
+          canMutate ? (
+            <Button
+              variant="primary"
+              className="bg-accent text-accent-text hover:bg-accent-hover"
+              onPress={() => openCreate()}
+            >
+              <Plus className="size-4 shrink-0" />
+              Nueva categoría
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card.Root
@@ -734,7 +891,14 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
                             }
                             onEdit={() => void openEdit(node.id)}
                             onAddChild={() => openCreate(node.id)}
-                            onDelete={() => openDelete(node.id, node.name)}
+                            deleteControl={
+                              canMutate ? (
+                                <DeleteCategoriaDialog
+                                  categoryName={node.name}
+                                  onConfirm={() => runDeleteCategory(node.id)}
+                                />
+                              ) : null
+                            }
                             canMutate={canMutate}
                           />
                           {isEx && childIds.length > 0 ? (
@@ -753,7 +917,14 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
                                       key={cat.id}
                                       cat={cat}
                                       onEdit={() => void openEdit(cat.id)}
-                                      onDelete={() => openDelete(cat.id, cat.name)}
+                                      deleteControl={
+                                        canMutate ? (
+                                          <DeleteCategoriaDialog
+                                            categoryName={cat.name}
+                                            onConfirm={() => runDeleteCategory(cat.id)}
+                                          />
+                                        ) : null
+                                      }
                                       canMutate={canMutate}
                                     />
                                   );
@@ -969,46 +1140,11 @@ export function CategoriasClient({ tenantId, role }: CategoriasClientProps) {
         </div>
       </div>
 
-      <Modal.Root state={deleteModal}>
-        <Modal.Backdrop />
-        <Modal.Container placement="center" size="md">
-          <Modal.Dialog className="max-w-md">
-            <Modal.Header>
-              <Modal.Heading>Eliminar categoría</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body className="flex flex-col gap-2">
-              <Text className="text-foreground-secondary">
-                ¿Eliminar{" "}
-                <span className="font-medium text-foreground">
-                  {deleteTarget?.name ?? ""}
-                </span>
-                ?
-              </Text>
-              {deleteError ? (
-                <Text className="text-sm text-danger">{deleteError}</Text>
-              ) : null}
-            </Modal.Body>
-            <Modal.Footer className="flex justify-end gap-2">
-              <Button
-                variant="secondary"
-                onPress={() => {
-                  setDeleteError(null);
-                  deleteModal.close();
-                }}
-              >
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                className="bg-danger text-white hover:opacity-90"
-                onPress={() => void confirmDelete()}
-              >
-                Eliminar
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Root>
+      <CategoryFeedbackModal
+        state={feedbackModal}
+        payload={feedbackPayload}
+        onDismiss={dismissFeedback}
+      />
     </div>
   );
 }

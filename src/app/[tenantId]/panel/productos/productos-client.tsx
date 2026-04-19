@@ -26,10 +26,12 @@ import {
   Text,
   toast,
 } from "@heroui/react";
-import { Eye, PackageOpen, Plus, Trash2 } from "lucide-react";
+import { Eye, PackageOpen, Pencil, Plus, Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
+import { PanelPageHeader } from "@/components/panel/PanelPageHeader";
+import type { CategorySelectOption } from "@/lib/category-select-options";
 import type { Role } from "@/lib/permissions";
 
 export type ProductoListItem = {
@@ -48,7 +50,7 @@ export type ProductoListItem = {
   food_cost_percentage: number | null;
 };
 
-export type CategoriaOption = { id: string; name: string };
+export type CategoriaOption = CategorySelectOption;
 
 const money = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -211,21 +213,21 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
       <Suspense fallback={null}>
         <ProductosQueryToasts tenantId={tenantId} />
       </Suspense>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <Text className="text-2xl font-semibold tracking-tight text-foreground">
-          Productos
-        </Text>
-        <Button
-          variant="primary"
-          className="bg-accent text-accent-text hover:bg-accent-hover"
-          onPress={() =>
-            router.push(`/${tenantId}/panel/productos/crear`)
-          }
-        >
-          <Plus className="size-4 shrink-0" />
-          Nuevo producto
-        </Button>
-      </div>
+      <PanelPageHeader
+        title="Productos"
+        end={
+          <Button
+            variant="primary"
+            className="bg-accent text-accent-text hover:bg-accent-hover"
+            onPress={() =>
+              router.push(`/${tenantId}/panel/productos/crear`)
+            }
+          >
+            <Plus className="size-4 shrink-0" />
+            Nuevo producto
+          </Button>
+        }
+      />
 
       <div className="flex flex-col gap-3 rounded-xl border border-border-subtle bg-surface p-4 md:flex-row md:flex-wrap md:items-end">
         <label className="flex min-w-[200px] flex-1 flex-col gap-1 md:max-w-sm">
@@ -319,7 +321,18 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
           className="overflow-x-auto rounded-xl border border-border-subtle"
           style={glassStyle}
         >
-          <table className="w-full min-w-[880px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[880px] table-fixed border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-[76px]" />
+              <col />
+              <col className="w-[11rem]" />
+              <col className="w-[7rem]" />
+              <col className="w-[7rem]" />
+              <col className="w-[4.5rem]" />
+              <col className="w-[6.5rem]" />
+              <col className="w-[5.5rem]" />
+              <col className="w-[7rem]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-border-subtle bg-surface/80 text-foreground-secondary">
                 <th className="px-4 py-3 font-medium">Imagen</th>
@@ -330,7 +343,9 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
                 <th className="px-4 py-3 font-medium">Stock</th>
                 <th className="px-4 py-3 font-medium">Food cost %</th>
                 <th className="px-4 py-3 font-medium">Estado</th>
-                <th className="px-4 py-3 font-medium text-end">Acciones</th>
+                <th className="whitespace-nowrap px-4 py-3 text-end font-medium">
+                  Acciones
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
@@ -361,9 +376,9 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <div className="font-medium text-foreground">{p.name}</div>
-                      <div className="text-xs text-foreground-muted">
-                        {p.sku ?? "—"}
-                      </div>
+                      {p.sku ? (
+                        <div className="text-xs text-foreground-muted">{p.sku}</div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <BadgeRoot
@@ -415,20 +430,36 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
                       </SwitchRoot>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          isIconOnly
-                          aria-label="Ver detalle"
-                          onPress={() =>
-                            router.push(
-                              `/${tenantId}/panel/productos/${p.id}`,
-                            )
-                          }
-                        >
-                          <Eye className="size-4" />
-                        </Button>
+                      <div className="flex justify-end gap-1 whitespace-nowrap">
+                        {canMutate ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            isIconOnly
+                            aria-label="Editar producto"
+                            onPress={() =>
+                              router.push(
+                                `/${tenantId}/panel/productos/${p.id}`,
+                              )
+                            }
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            isIconOnly
+                            aria-label="Ver detalle"
+                            onPress={() =>
+                              router.push(
+                                `/${tenantId}/panel/productos/${p.id}`,
+                              )
+                            }
+                          >
+                            <Eye className="size-4" />
+                          </Button>
+                        )}
                         {canMutate ? (
                           <DeleteProductDialog
                             name={p.name}

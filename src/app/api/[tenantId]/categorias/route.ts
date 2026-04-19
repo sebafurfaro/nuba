@@ -41,8 +41,16 @@ export async function GET(_request: Request, ctx: Ctx) {
   if (gate instanceof NextResponse) {
     return gate;
   }
-  const tree = await getCategoryTree(gate.tenantUuid);
-  return NextResponse.json(tree);
+  try {
+    const tree = await getCategoryTree(gate.tenantUuid);
+    return NextResponse.json(tree);
+  } catch (e) {
+    console.error("[GET categorias]", e);
+    return NextResponse.json(
+      { error: "Error al cargar categorías" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request, ctx: Ctx) {
@@ -83,7 +91,7 @@ export async function POST(request: Request, ctx: Ctx) {
     console.error("[POST categorias]", e);
     return NextResponse.json(
       { error: msg || "Error al crear categoría" },
-      { status: 400 },
+      { status: 500 },
     );
   }
 }

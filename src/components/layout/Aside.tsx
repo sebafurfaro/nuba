@@ -5,6 +5,7 @@ import {
   Building2,
   CalendarDays,
   LayoutDashboard,
+  MapPin,
   Package,
   PanelLeft,
   PanelLeftClose,
@@ -80,6 +81,9 @@ function navIcon(item: PanelNavItem) {
   if (item.label === "Mesas") {
     return UtensilsCrossed;
   }
+  if (item.label === "Ubicaciones") {
+    return MapPin;
+  }
   if (item.label === "Clientes") {
     return Users;
   }
@@ -149,7 +153,7 @@ export function Aside({
     cn(
       "flex items-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
       pathname === href || (href !== base && pathname.startsWith(`${href}/`))
-        ? "bg-accent text-accent-text shadow-[0_10px_24px_rgba(79,70,229,0.2)]"
+        ? "bg-accent text-accent-text shadow-[0_10px_24px_color-mix(in_srgb,var(--nuba-accent)_20%,transparent)]"
         : "text-default-600 hover:bg-default/45 hover:text-foreground",
       effectiveCollapsed && !isMobile && "justify-center px-0",
     );
@@ -256,7 +260,7 @@ export function Aside({
         "panel-glass flex h-dvh shrink-0 flex-col overflow-hidden border-e border-default-200/20",
         isMobile
           ? mobileOpen
-            ? "fixed inset-y-0 start-0 z-50 m-3 w-[calc(100vw-1.5rem)] max-w-[20rem] rounded-[28px] shadow-2xl md:static md:z-30 md:m-0 md:max-w-none md:rounded-none md:shadow-none"
+            ? "fixed inset-y-0 start-0 z-50 m-3 w-[calc(100vw-1.5rem)] max-w-[18rem] rounded-[28px] shadow-2xl md:static md:z-30 md:m-0 md:max-w-none md:rounded-none md:shadow-none"
             : "hidden md:flex"
           : "sticky top-0 z-30 m-3 h-[calc(100dvh-1.5rem)] rounded-[30px] md:flex",
         !isMobile && (collapsed ? "w-20" : "w-72"),
