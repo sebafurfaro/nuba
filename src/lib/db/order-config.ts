@@ -432,3 +432,26 @@ export async function bulkUpdateOrderStatusSortOrder(
     conn.release();
   }
 }
+
+export type BranchListItem = {
+  id: string;
+  name: string;
+};
+
+/** Sucursales activas del tenant (slug de URL), para selects en panel. */
+export async function listBranchesByTenantSlug(
+  tenantSlug: string,
+): Promise<BranchListItem[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT b.id, b.name
+     FROM branches b
+     INNER JOIN tenants t ON t.id = b.tenant_id
+     WHERE t.slug = ? AND t.is_active = TRUE AND b.is_active = TRUE
+     ORDER BY b.name ASC`,
+    [tenantSlug],
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    name: String(r.name),
+  }));
+}

@@ -19,6 +19,8 @@ export type SessionPayload = {
   tenantId: string;
   role: Role;
   email?: string;
+  branchId: string | null;
+  branchName: string | null;
   permissions: PermissionClaim[];
 };
 
@@ -65,6 +67,8 @@ export async function signSessionToken(
     tenantId: payload.tenantId,
     role: payload.role,
     email: payload.email,
+    branchId: payload.branchId,
+    branchName: payload.branchName,
     permissions: payload.permissions,
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -91,11 +95,13 @@ export async function verifySessionToken(
       typeof payload.tenantId === "string" ? payload.tenantId : null;
     const role = payload.role as Role | undefined;
     const email = typeof payload.email === "string" ? payload.email : undefined;
+    const branchId = typeof payload.branchId === "string" ? payload.branchId : null;
+    const branchName = typeof payload.branchName === "string" ? payload.branchName : null;
     const permissions = parsePermissions(payload.permissions);
     if (!sub || !tenantId || !role) {
       return null;
     }
-    return { sub, tenantId, role, email, permissions };
+    return { sub, tenantId, role, email, branchId, branchName, permissions };
   } catch {
     return null;
   }

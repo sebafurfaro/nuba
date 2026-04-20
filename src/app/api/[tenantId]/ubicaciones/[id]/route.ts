@@ -23,8 +23,8 @@ const locationTypeEnum = z.enum([
 
 const updateLocationBodySchema = z
   .object({
-    branch_id: z.string().uuid().nullable().optional(),
-    table_id: z.string().uuid().nullable().optional(),
+    branch_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
+    table_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
     type: locationTypeEnum.optional(),
     name: z.string().min(1).max(100).optional(),
     capacity: z.number().int().min(0).nullable().optional(),

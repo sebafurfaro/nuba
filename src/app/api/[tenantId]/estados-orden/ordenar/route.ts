@@ -13,7 +13,7 @@ const sortBodySchema = z.object({
   items: z
     .array(
       z.object({
-        id: z.string().uuid(),
+        id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
         sort_order: z.number().int(),
       }),
     )

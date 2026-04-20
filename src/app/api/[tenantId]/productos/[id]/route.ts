@@ -35,7 +35,7 @@ const updateProductFullSchema = z
     sku: z.string().max(100).nullable().optional(),
     category_id: z.preprocess(
       emptyStringToNullU,
-      z.union([z.string().uuid(), z.null()]).optional(),
+      z.union([z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i), z.null()]).optional(),
     ),
     price: z.number().positive(),
     discount_price: z.number().positive().nullable().optional(),
@@ -45,9 +45,9 @@ const updateProductFullSchema = z
     is_active: z.boolean(),
     recipe_id: z.preprocess(
       emptyStringToNullU,
-      z.union([z.string().uuid(), z.null()]).optional(),
+      z.union([z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i), z.null()]).optional(),
     ),
-    branch_id: z.string().uuid().nullable().optional(),
+    branch_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
     image_url: z.string().max(2000).nullable().optional(),
     portion_size: z.number().positive().optional(),
     portion_unit: unitEnum.nullable().optional(),

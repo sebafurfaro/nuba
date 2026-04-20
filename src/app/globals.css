@@ -54,9 +54,11 @@
 
   /* Alias semánticos para diálogos y estilos inline (evitan colores fuera de tokens) */
   --accent: var(--nuba-accent);
+  --accent-soft: var(--nuba-accent-soft);
   --success: var(--nuba-success);
   --warning: var(--nuba-warning);
   --danger: var(--nuba-danger);
+  --danger-soft: var(--nuba-danger-soft);
 
   /* Aliases relevamiento (inline / sustitución de gray-* y hex en UI) */
   --background-surface: var(--nuba-surface);
@@ -109,9 +111,11 @@
   --nuba-accent-text: #030712;
 
   --accent: var(--nuba-accent);
+  --accent-soft: var(--nuba-accent-soft);
   --success: var(--nuba-success);
   --warning: var(--nuba-warning);
   --danger: var(--nuba-danger);
+  --danger-soft: var(--nuba-danger-soft);
 
   --background-surface: var(--nuba-surface);
   --background-page: var(--nuba-page);

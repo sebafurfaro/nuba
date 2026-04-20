@@ -37,7 +37,7 @@ const optionalPositiveNullable = z.preprocess(
 export const variacionFormSchema = z.object({
   /** Presente solo al editar producto (persistencia en API). */
   id: z
-    .union([z.string().uuid(), z.literal(""), z.undefined()])
+    .union([z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i), z.literal(""), z.undefined()])
     .optional()
     .transform((v) => (v == null || v === "" ? undefined : v)),
   nombre: z.string().min(1).max(100),
@@ -73,7 +73,7 @@ const productoCreateFormBaseSchema = z.object({
       const s = String(v).trim();
       return s === "" ? undefined : s;
     },
-    z.string().uuid().optional(),
+    z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
   ),
   precio: positiveNum,
   precio_descuento: optionalPositiveNullable,
@@ -87,7 +87,7 @@ const productoCreateFormBaseSchema = z.object({
     z.number().int().min(0).nullable().optional(),
   ),
   is_active: z.boolean(),
-  recipe_id: z.union([z.string().uuid(), z.literal("")]).optional(),
+  recipe_id: z.union([z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i), z.literal("")]).optional(),
   /** Solo creación: se persiste como `recipes` + `ingredients` + `recipe_items`. */
   ingredientes_inline: z
     .array(ingredienteInlineFormSchema)

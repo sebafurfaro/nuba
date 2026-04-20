@@ -12,6 +12,7 @@ import type { Role } from "@/lib/permissions";
 type HeaderProps = {
   tenantId: string;
   role: Role;
+  branchName?: string | null;
   showMobileNav?: boolean;
   onOpenMobileNav?: () => void;
 };
@@ -19,6 +20,7 @@ type HeaderProps = {
 export function Header({
   tenantId,
   role,
+  branchName,
   showMobileNav = false,
   onOpenMobileNav,
 }: HeaderProps) {
@@ -32,6 +34,7 @@ export function Header({
 
   const isDark = mounted && resolvedTheme === "dark";
   const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+  const workspaceLabel = branchName ?? tenantId;
 
   return (
     <HeroHeader className="sticky top-0 z-30 px-3 pb-0 pt-3 md:px-5 md:pt-4">
@@ -54,7 +57,7 @@ export function Header({
 
           <div className="hidden min-w-0 md:flex md:space-x-2 md:items-center">
             <Text className="truncate text-[11px] font-semibold uppercase tracking-[0.24em] text-foreground-muted">
-              Workspace
+              {workspaceLabel}
             </Text>
             <Text className="truncate text-sm font-semibold text-foreground">
               Panel <span className="text-foreground-secondary capitalize">/ {tenantId}</span>

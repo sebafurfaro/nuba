@@ -12,12 +12,14 @@ const STORAGE_KEY = "nuba.panel.asideCollapsed";
 type PanelLayoutClientProps = {
   tenantId: string;
   role: Role;
+  branchName?: string | null;
   children: React.ReactNode;
 };
 
 export function PanelLayoutClient({
   tenantId,
   role,
+  branchName,
   children,
 }: PanelLayoutClientProps) {
   const isMobile = useIsMobile();
@@ -111,6 +113,7 @@ export function PanelLayoutClient({
         <Header
           tenantId={tenantId}
           role={role}
+          branchName={branchName}
           showMobileNav={isMobile}
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />

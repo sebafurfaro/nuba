@@ -40,7 +40,7 @@ const createProductSchema = z
         const s = typeof v === "string" ? v.trim() : v;
         return s === "" ? null : s;
       },
-      z.union([z.string().uuid(), z.null()]).optional(),
+      z.union([z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i), z.null()]).optional(),
     ),
     price: z.number().positive(),
     discount_price: z.number().positive().nullable().optional(),
@@ -48,13 +48,13 @@ const createProductSchema = z
     stock: z.number().int().min(0).optional(),
     stock_alert_threshold: z.number().int().min(0).nullable().optional(),
     is_active: z.boolean(),
-    recipe_id: z.string().uuid().nullable().optional(),
+    recipe_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
     /** Si viene con ítems, se crea receta + ingredientes nuevos y se ignora `recipe_id`. */
     inline_recipe_ingredients: z
       .array(inlineRecipeIngredientSchema)
       .max(40)
       .optional(),
-    branch_id: z.string().uuid().nullable().optional(),
+    branch_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
     image_url: z.string().max(2000).nullable().optional(),
     portion_size: z.number().positive().optional(),
     portion_unit: unitEnum.nullable().optional(),

@@ -549,14 +549,25 @@ export async function createOrder(
     }
     for (const line of data.items) {
       const itemId = crypto.randomUUID();
+      // Validar disponibilidad en la sucursal y obtener precio efectivo (Modelo C)
       const [pr] = await conn.query<RowDataPacket[]>(
-        `SELECT name, price FROM products WHERE id = ? AND tenant_id = ? LIMIT 1`,
-        [line.product_id, tenantId],
+        `SELECT p.name,
+                COALESCE(bp.price_override, p.price) AS effective_price,
+                p.track_stock, p.stock
+         FROM products p
+         LEFT JOIN branch_products bp
+           ON bp.product_id = p.id AND bp.branch_id = ?
+         WHERE p.id = ? AND p.tenant_id = ?
+           AND p.is_active = TRUE
+           AND (p.is_global = TRUE OR bp.branch_id IS NOT NULL)
+           AND COALESCE(bp.is_active, TRUE) = TRUE
+         LIMIT 1`,
+        [branchId, line.product_id, tenantId],
       );
       if (!pr.length) {
         throw new Error(`Producto no encontrado: ${line.product_id}`);
       }
-      let unitPrice = num(pr[0]!.price);
+      let unitPrice = num(pr[0]!.effective_price);
       let name = String(pr[0]!.name);
       if (line.variant_id) {
         const [vr] = await conn.query<RowDataPacket[]>(

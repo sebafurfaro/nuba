@@ -15,8 +15,8 @@ export const createIngredientSchema = z.object({
   unit_cost: z.number().nonnegative(),
   stock_quantity: z.number().nonnegative(),
   stock_alert_threshold: z.number().nonnegative().nullable().optional(),
-  branch_id: z.string().uuid().nullable().optional(),
-  supplier_id: z.string().uuid().nullable().optional(),
+  branch_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
+  supplier_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
   is_active: z.boolean().optional().default(true),
 });
 
@@ -24,8 +24,8 @@ export const updateIngredientSchema = createIngredientSchema.partial();
 
 export const recipeItemBodySchema = z
   .object({
-    ingredient_id: z.string().uuid().optional(),
-    sub_recipe_id: z.string().uuid().optional(),
+    ingredient_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
+    sub_recipe_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
     quantity: z.number().positive(),
     unit: unitTypeSchema,
     notes: z.string().max(5000).nullable().optional(),

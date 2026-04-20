@@ -22,7 +22,7 @@ export default async function PanelLayout({
   }
 
   return (
-    <PanelLayoutClient tenantId={tenantId} role={session.role}>
+    <PanelLayoutClient tenantId={tenantId} role={session.role} branchName={session.branchName}>
       {children}
     </PanelLayoutClient>
   );

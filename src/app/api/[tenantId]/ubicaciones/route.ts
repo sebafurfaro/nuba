@@ -26,8 +26,8 @@ const locationTypeEnum = z.enum([
 
 const createLocationBodySchema = z
   .object({
-    branch_id: z.string().uuid().nullable().optional(),
-    table_id: z.string().uuid().nullable().optional(),
+    branch_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
+    table_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).nullable().optional(),
     type: locationTypeEnum,
     name: z.string().max(100).optional(),
     /** Si viene con `name_prefix`, crea N ubicaciones `{prefix} 1` … `{prefix} N`. */

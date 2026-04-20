@@ -13,6 +13,8 @@ declare module "next-auth" {
       id: string;
       tenantId: string;
       role: Role;
+      branchId: string | null;
+      branchName: string | null;
     } & DefaultSession["user"];
   }
 }
@@ -39,6 +41,8 @@ export async function auth(): Promise<Session | null> {
       email: payload.email ?? "",
       tenantId: payload.tenantId,
       role: payload.role,
+      branchId: payload.branchId,
+      branchName: payload.branchName,
     },
   };
 }

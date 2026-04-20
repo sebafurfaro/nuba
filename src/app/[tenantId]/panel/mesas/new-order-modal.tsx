@@ -234,8 +234,11 @@ export function NewOrderModal({
     }
     (async () => {
       const res = await fetch(`/api/${tenantId}/clientes`, { credentials: "include" });
-      const j = (await res.json()) as { customers?: CustomerRow[] };
-      setCustomers(j.customers ?? []);
+      const j = (await res.json()) as {
+        data?: CustomerRow[];
+        customers?: CustomerRow[];
+      };
+      setCustomers(j.data ?? j.customers ?? []);
     })();
   }, [state.isOpen, orderType, tenantId]);
 

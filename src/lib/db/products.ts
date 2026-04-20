@@ -60,32 +60,66 @@ export type ProductListItem = {
 export type ProductListFilters = {
   categoryId?: string | null;
   activeOnly?: boolean;
+  /** Si se pasa, filtra por productos disponibles en esa sucursal (globales + asignados). */
+  branchId?: string | null;
 };
 
 export async function getProducts(
   tenantUuid: string,
   filters?: ProductListFilters,
 ): Promise<ProductListItem[]> {
-  const where: string[] = ["p.tenant_id = ?"];
-  const params: unknown[] = [tenantUuid];
-  if (filters?.categoryId) {
-    where.push("p.category_id = ?");
-    params.push(filters.categoryId);
-  }
-  if (filters?.activeOnly === true) {
-    where.push("p.is_active = TRUE");
-  }
+  const branchId = filters?.branchId ?? null;
 
-  const [prodRows] = await pool.query<RowDataPacket[]>(
-    `SELECT p.id, p.name, p.sku, p.image_url, p.price, p.discount_price, p.stock,
-            p.track_stock, p.is_active, p.recipe_id, p.category_id, p.portion_size,
-            c.name AS category_name
-     FROM products p
-     LEFT JOIN categories c ON c.id = p.category_id AND c.tenant_id = p.tenant_id
-     WHERE ${where.join(" AND ")}
-     ORDER BY p.name ASC`,
-    params,
-  );
+  let prodRows: RowDataPacket[];
+
+  if (branchId) {
+    // Modelo C: productos globales O asignados a esta sucursal, activos en la sucursal
+    const categoryClause = filters?.categoryId
+      ? "AND p.category_id = ?"
+      : "";
+    const categoryParams: unknown[] = filters?.categoryId ? [filters.categoryId] : [];
+
+    [prodRows] = await pool.query<RowDataPacket[]>(
+      `SELECT p.id, p.name, p.sku, p.image_url,
+              COALESCE(bp.price_override, p.price) AS price,
+              p.discount_price, p.stock,
+              p.track_stock, p.is_active, p.recipe_id, p.category_id, p.portion_size,
+              c.name AS category_name
+       FROM products p
+       LEFT JOIN branch_products bp
+         ON bp.product_id = p.id AND bp.branch_id = ?
+       LEFT JOIN categories c ON c.id = p.category_id AND c.tenant_id = p.tenant_id
+       WHERE p.tenant_id = ?
+         AND p.is_active = TRUE
+         AND (p.is_global = TRUE OR bp.branch_id IS NOT NULL)
+         AND COALESCE(bp.is_active, TRUE) = TRUE
+         ${categoryClause}
+       ORDER BY p.name ASC`,
+      [branchId, tenantUuid, ...categoryParams],
+    );
+  } else {
+    // Listado admin: comportamiento original sin filtro de sucursal
+    const where: string[] = ["p.tenant_id = ?"];
+    const params: unknown[] = [tenantUuid];
+    if (filters?.categoryId) {
+      where.push("p.category_id = ?");
+      params.push(filters.categoryId);
+    }
+    if (filters?.activeOnly === true) {
+      where.push("p.is_active = TRUE");
+    }
+
+    [prodRows] = await pool.query<RowDataPacket[]>(
+      `SELECT p.id, p.name, p.sku, p.image_url, p.price, p.discount_price, p.stock,
+              p.track_stock, p.is_active, p.recipe_id, p.category_id, p.portion_size,
+              c.name AS category_name
+       FROM products p
+       LEFT JOIN categories c ON c.id = p.category_id AND c.tenant_id = p.tenant_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY p.name ASC`,
+      params,
+    );
+  }
 
   const products: ProductListItem[] = [];
   for (const r of prodRows) {
@@ -648,4 +682,148 @@ export async function getProductFoodCost(
   const food_cost_percentage =
     effectivePrice > 0 ? (food_cost / effectivePrice) * 100 : 0;
   return { food_cost, food_cost_percentage };
+}
+
+// ─── Branch-product functions (Modelo C) ─────────────────────────────────────
+
+import type { BranchProduct } from "@/types/product";
+
+export async function getProductBranchAssignments(
+  tenantUuid: string,
+  productId: string,
+): Promise<BranchProduct[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT bp.id, bp.branch_id, b.name AS branch_name, bp.product_id,
+            bp.is_active, bp.price_override,
+            COALESCE(bp.price_override, p.price) AS effective_price
+     FROM branch_products bp
+     JOIN branches b  ON b.id  = bp.branch_id
+     JOIN products p  ON p.id  = bp.product_id
+     WHERE bp.tenant_id = ? AND bp.product_id = ?
+     ORDER BY b.name ASC`,
+    [tenantUuid, productId],
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    branch_id: String(r.branch_id),
+    branch_name: String(r.branch_name),
+    product_id: String(r.product_id),
+    is_active: mapDbBool(r.is_active),
+    price_override: r.price_override == null ? null : num(r.price_override),
+    effective_price: num(r.effective_price),
+  }));
+}
+
+async function fetchBranchProduct(
+  tenantUuid: string,
+  productId: string,
+  branchId: string,
+): Promise<BranchProduct | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT bp.id, bp.branch_id, b.name AS branch_name, bp.product_id,
+            bp.is_active, bp.price_override,
+            COALESCE(bp.price_override, p.price) AS effective_price
+     FROM branch_products bp
+     JOIN branches b ON b.id = bp.branch_id
+     JOIN products p ON p.id = bp.product_id
+     WHERE bp.tenant_id = ? AND bp.product_id = ? AND bp.branch_id = ?
+     LIMIT 1`,
+    [tenantUuid, productId, branchId],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: String(r.id),
+    branch_id: String(r.branch_id),
+    branch_name: String(r.branch_name),
+    product_id: String(r.product_id),
+    is_active: mapDbBool(r.is_active),
+    price_override: r.price_override == null ? null : num(r.price_override),
+    effective_price: num(r.effective_price),
+  };
+}
+
+export async function assignProductToBranch(
+  tenantUuid: string,
+  productId: string,
+  branchId: string,
+  priceOverride?: number | null,
+): Promise<BranchProduct> {
+  await pool.query<ResultSetHeader>(
+    `INSERT INTO branch_products (tenant_id, branch_id, product_id, is_active, price_override)
+     VALUES (?, ?, ?, TRUE, ?)
+     ON DUPLICATE KEY UPDATE
+       is_active = TRUE,
+       price_override = VALUES(price_override)`,
+    [tenantUuid, branchId, productId, priceOverride ?? null],
+  );
+  const result = await fetchBranchProduct(tenantUuid, productId, branchId);
+  if (!result) throw new Error("branch_product no encontrado tras upsert");
+  return result;
+}
+
+export async function unassignProductFromBranch(
+  tenantUuid: string,
+  productId: string,
+  branchId: string,
+): Promise<void> {
+  await pool.query<ResultSetHeader>(
+    `UPDATE branch_products SET is_active = FALSE
+     WHERE tenant_id = ? AND product_id = ? AND branch_id = ?`,
+    [tenantUuid, productId, branchId],
+  );
+}
+
+export async function updateBranchProductPrice(
+  tenantUuid: string,
+  productId: string,
+  branchId: string,
+  priceOverride: number | null,
+): Promise<BranchProduct> {
+  await pool.query<ResultSetHeader>(
+    `UPDATE branch_products SET price_override = ?
+     WHERE tenant_id = ? AND product_id = ? AND branch_id = ?`,
+    [priceOverride, tenantUuid, productId, branchId],
+  );
+  const result = await fetchBranchProduct(tenantUuid, productId, branchId);
+  if (!result) throw new Error("branch_product no encontrado");
+  return result;
+}
+
+export async function makeProductGlobal(
+  tenantUuid: string,
+  productId: string,
+): Promise<void> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query<ResultSetHeader>(
+      `UPDATE products SET is_global = TRUE WHERE tenant_id = ? AND id = ?`,
+      [tenantUuid, productId],
+    );
+    // Asignar a todas las sucursales activas que aún no lo tengan
+    await conn.query<ResultSetHeader>(
+      `INSERT IGNORE INTO branch_products (tenant_id, branch_id, product_id, is_active)
+       SELECT ?, b.id, ?, TRUE
+       FROM branches b
+       WHERE b.tenant_id = ? AND b.is_active = TRUE`,
+      [tenantUuid, productId, tenantUuid],
+    );
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function makeProductBranchSpecific(
+  tenantUuid: string,
+  productId: string,
+): Promise<void> {
+  await pool.query<ResultSetHeader>(
+    `UPDATE products SET is_global = FALSE WHERE tenant_id = ? AND id = ?`,
+    [tenantUuid, productId],
+  );
 }

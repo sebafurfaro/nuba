@@ -10,15 +10,15 @@ type Ctx = { params: Promise<{ tenantId: string }> };
 const orderTypeSchema = z.enum(["dine_in", "takeaway", "delivery", "online"]);
 
 const createOrderItemSchema = z.object({
-  product_id: z.string().uuid(),
-  variant_id: z.string().uuid().optional(),
+  product_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  variant_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
   quantity: z.number().int().positive(),
   notes: z.string().max(500).optional(),
 });
 
 const createOrderBodySchema = z.object({
-  location_id: z.string().uuid().optional(),
-  customer_id: z.string().uuid().optional(),
+  location_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
+  customer_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
   customer_name: z.string().max(255).nullable().optional(),
   customer_phone: z.string().max(50).nullable().optional(),
   delivery_address: z.string().max(5000).nullable().optional(),

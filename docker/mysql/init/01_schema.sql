@@ -14,9 +14,20 @@ CREATE TABLE IF NOT EXISTS tenants (
   id            VARCHAR(36)   NOT NULL DEFAULT (UUID()),
   slug          VARCHAR(100)  NOT NULL UNIQUE,        -- el tenantId de la URL
   name          VARCHAR(255)  NOT NULL,
+  description   TEXT          NULL,
   email         VARCHAR(255)  NOT NULL,
   phone         VARCHAR(50)   NULL,
+  whatsapp      VARCHAR(50)   NULL,
+  address       TEXT          NULL,
+  city          VARCHAR(100)  NULL,
+  province      VARCHAR(100)  NULL,
   logo_url      TEXT          NULL,
+  banner_url    TEXT          NULL,
+  website       VARCHAR(255)  NULL,
+  instagram     VARCHAR(100)  NULL,
+  tiktok        VARCHAR(100)  NULL,
+  youtube       VARCHAR(255)  NULL,
+  facebook      VARCHAR(100)  NULL,
   plan          ENUM('free','starter','pro','enterprise') NOT NULL DEFAULT 'free',
   is_active     BOOLEAN       NOT NULL DEFAULT TRUE,
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -100,6 +111,7 @@ CREATE TABLE IF NOT EXISTS branches (
 CREATE TABLE IF NOT EXISTS users (
   id            VARCHAR(36)   NOT NULL DEFAULT (UUID()),
   tenant_id     VARCHAR(36)   NOT NULL,
+  -- DEPRECATED: usar user_branches para múltiples sucursales; se mantiene por compatibilidad
   branch_id     VARCHAR(36)   NULL,
   role_id       VARCHAR(36)   NOT NULL,
   first_name    VARCHAR(100)  NOT NULL,
@@ -120,6 +132,51 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
+-- USER_BRANCHES (pivot usuario ↔ sucursal; reemplaza branch_id en users)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS user_branches (
+  id          VARCHAR(36) NOT NULL DEFAULT (UUID()),
+  tenant_id   VARCHAR(36) NOT NULL,
+  user_id     VARCHAR(36) NOT NULL,
+  branch_id   VARCHAR(36) NOT NULL,
+  is_primary  BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_user_branch (user_id, branch_id),
+  INDEX idx_ub_tenant (tenant_id),
+  INDEX idx_ub_user   (user_id),
+  CONSTRAINT fk_ub_tenant FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ub_user   FOREIGN KEY (user_id)
+    REFERENCES users(id)   ON DELETE CASCADE,
+  CONSTRAINT fk_ub_branch FOREIGN KEY (branch_id)
+    REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- PASSWORD_RESET_TOKENS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id          VARCHAR(36)  NOT NULL DEFAULT (UUID()),
+  tenant_id   VARCHAR(36)  NOT NULL,
+  user_id     VARCHAR(36)  NOT NULL,
+  token       VARCHAR(255) NOT NULL UNIQUE,
+  type        ENUM('email_link', 'temp_password') NOT NULL,
+  expires_at  DATETIME     NOT NULL,
+  used_at     DATETIME     NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_prt_token   (token),
+  INDEX idx_prt_user    (user_id),
+  CONSTRAINT fk_prt_tenant FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_prt_user   FOREIGN KEY (user_id)
+    REFERENCES users(id)   ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
 -- CUSTOMERS (clientes del tenant)
 -- ============================================================
 
@@ -134,6 +191,8 @@ CREATE TABLE IF NOT EXISTS customers (
   phone         VARCHAR(50)   NULL,
   dni           VARCHAR(20)   NULL,
   birthdate     DATE          NULL,
+  address       VARCHAR(500)  NULL,
+  city          VARCHAR(120)  NULL,
   notes         TEXT          NULL,
   is_active     BOOLEAN       NOT NULL DEFAULT TRUE,
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -209,6 +268,8 @@ CREATE TABLE IF NOT EXISTS products (
   stock_alert_threshold INT       NULL,
   portion_size    DECIMAL(12,4)   NOT NULL DEFAULT 1.0000,
   portion_unit    ENUM('ml','l','g','kg','u','porciones') NULL,
+  is_global       BOOLEAN         NOT NULL DEFAULT TRUE
+                  COMMENT 'TRUE = disponible en todas las sucursales por defecto',
   is_active       BOOLEAN         NOT NULL DEFAULT TRUE,
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -221,6 +282,33 @@ CREATE TABLE IF NOT EXISTS products (
   CONSTRAINT fk_products_branch   FOREIGN KEY (branch_id)   REFERENCES branches(id)   ON DELETE SET NULL,
   CONSTRAINT fk_products_category FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
   CONSTRAINT fk_products_recipe   FOREIGN KEY (recipe_id)   REFERENCES recipes(id)     ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- BRANCH PRODUCTS (catálogo por sucursal — Modelo C)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS branch_products (
+  id             VARCHAR(36)   NOT NULL DEFAULT (UUID()),
+  tenant_id      VARCHAR(36)   NOT NULL,
+  branch_id      VARCHAR(36)   NOT NULL,
+  product_id     VARCHAR(36)   NOT NULL,
+  is_active      BOOLEAN       NOT NULL DEFAULT TRUE,
+  price_override DECIMAL(12,2) NULL,
+  created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_branch_product (branch_id, product_id),
+  INDEX idx_bp_tenant  (tenant_id),
+  INDEX idx_bp_branch  (branch_id),
+  INDEX idx_bp_product (product_id),
+  CONSTRAINT fk_bp_tenant  FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id)   ON DELETE CASCADE,
+  CONSTRAINT fk_bp_branch  FOREIGN KEY (branch_id)
+    REFERENCES branches(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_bp_product FOREIGN KEY (product_id)
+    REFERENCES products(id)  ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -261,6 +349,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  INDEX idx_suppliers_tenant (tenant_id),
   CONSTRAINT fk_suppliers_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -522,14 +611,16 @@ CREATE TABLE IF NOT EXISTS reservations (
   branch_id     VARCHAR(36)   NULL,
   table_id      VARCHAR(36)   NULL,
   customer_id   VARCHAR(36)   NULL,
-  customer_name VARCHAR(255)  NOT NULL,               -- nombre aunque no sea cliente registrado
+  customer_name  VARCHAR(255) NOT NULL,               -- nombre aunque no sea cliente registrado
   customer_phone VARCHAR(50)  NULL,
+  customer_email VARCHAR(255) NULL,
   party_size    INT           NOT NULL DEFAULT 2,
   date          DATE          NOT NULL,
   time          TIME          NOT NULL,
   duration_min  INT           NOT NULL DEFAULT 90,
   status        ENUM('pendiente','confirmada','cancelada','completada','no_show') NOT NULL DEFAULT 'pendiente',
   notes         TEXT          NULL,
+  created_by    ENUM('admin','client') NOT NULL DEFAULT 'admin',
   created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -578,7 +669,7 @@ INSERT INTO roles (id, tenant_id, name) VALUES
   ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-000000000001', 'vendedor'),
   ('00000000-0000-0000-0000-000000000023', '00000000-0000-0000-0000-000000000001', 'cliente');
 
--- Admin local: nuba@nodoapp.com.ar (bcrypt cost 12)
+-- Admin local: nuba@nodoapp.com.ar (bcrypt cost 12, password: nuba1234)
 INSERT INTO users (id, tenant_id, branch_id, role_id, first_name, last_name, email, password_hash) VALUES
   ('00000000-0000-0000-0000-000000000030',
    '00000000-0000-0000-0000-000000000001',
@@ -586,6 +677,42 @@ INSERT INTO users (id, tenant_id, branch_id, role_id, first_name, last_name, ema
    '00000000-0000-0000-0000-000000000020',
    'Nuba', 'Administrador', 'nuba@nodoapp.com.ar',
    '$2b$12$dL/bRghrLO/oN3exNeLbW.3RN59/IbJljC8PKF4.lBaViS/Ho5mRu');
+
+-- Supervisor: laura@demo.ar (bcrypt cost 12, password: super1234)
+INSERT INTO users (id, tenant_id, branch_id, role_id, first_name,
+  last_name, email, password_hash, is_active) VALUES (
+  '00000000-0000-0000-0000-000000000031',
+  '00000000-0000-0000-0000-000000000001',
+  '00000000-0000-0000-0000-000000000010',
+  '00000000-0000-0000-0000-000000000021',
+  'Laura', 'Gómez', 'laura@demo.ar',
+  '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBdKMjDnGFvGPi',
+  TRUE
+);
+
+-- Vendedor: carlos@demo.ar (bcrypt cost 12, password: mozo1234)
+INSERT INTO users (id, tenant_id, branch_id, role_id, first_name,
+  last_name, email, password_hash, is_active) VALUES (
+  '00000000-0000-0000-0000-000000000032',
+  '00000000-0000-0000-0000-000000000001',
+  '00000000-0000-0000-0000-000000000010',
+  '00000000-0000-0000-0000-000000000022',
+  'Carlos', 'Pérez', 'carlos@demo.ar',
+  '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBdKMjDnGFvGPi',
+  TRUE
+);
+
+-- Pivot sucursales (admin + supervisor + vendedor → Sucursal Central)
+INSERT INTO user_branches (tenant_id, user_id, branch_id, is_primary) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000030',
+   '00000000-0000-0000-0000-000000000010', TRUE),
+  ('00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000031',
+   '00000000-0000-0000-0000-000000000010', TRUE),
+  ('00000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000032',
+   '00000000-0000-0000-0000-000000000010', TRUE);
 
 -- Categorías jerárquicas (solo 1 nivel: padre → hijo; más niveles se validan en app)
 INSERT INTO categories (id, tenant_id, parent_id, name, level, sort_order) VALUES
@@ -623,9 +750,14 @@ INSERT INTO locations (id, tenant_id, branch_id, table_id, type, name, capacity,
   ('00000000-0000-0000-0000-0000000000D4', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000010', NULL,                                    'delivery', 'Delivery',  NULL, FALSE, 4);
 
 INSERT INTO feature_flags (tenant_id, flag_key, is_enabled) VALUES
-  ('00000000-0000-0000-0000-000000000001', 'enable_reservations', TRUE),
-  ('00000000-0000-0000-0000-000000000001', 'enable_delivery',     FALSE),
-  ('00000000-0000-0000-0000-000000000001', 'enable_mercadopago',  FALSE);
+  ('00000000-0000-0000-0000-000000000001', 'enable_tables',          TRUE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_takeaway',        TRUE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_delivery',        FALSE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_reservations',    TRUE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_mercadopago',     FALSE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_kitchen_display', FALSE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_split_bill',      FALSE),
+  ('00000000-0000-0000-0000-000000000001', 'enable_tips',            FALSE);
 
 INSERT IGNORE INTO permissions (id, tenant_id, role_id, resource, can_view, can_create, can_edit, can_delete) VALUES
   ('00000000-0000-0000-0000-000000000060', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'metricas', TRUE, TRUE, TRUE, TRUE),
@@ -634,5 +766,40 @@ INSERT IGNORE INTO permissions (id, tenant_id, role_id, resource, can_view, can_
   ('00000000-0000-0000-0000-000000000063', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'clientes', TRUE, TRUE, TRUE, TRUE),
   ('00000000-0000-0000-0000-000000000064', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'usuarios', TRUE, TRUE, TRUE, TRUE),
   ('00000000-0000-0000-0000-000000000065', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'administracion', TRUE, TRUE, TRUE, TRUE);
+
+-- Asignar todos los productos demo a la sucursal central
+INSERT IGNORE INTO branch_products (tenant_id, branch_id, product_id)
+SELECT p.tenant_id, b.id, p.id
+FROM products p
+JOIN branches b ON b.tenant_id = p.tenant_id
+WHERE p.tenant_id = '00000000-0000-0000-0000-000000000001';
+
+-- Índice en tenant_id para acelerar consultas de sucursales por tenant
+ALTER TABLE branches ADD INDEX idx_branches_tenant (tenant_id);
+
+-- ---------------------------------------------------------------------------
+-- Días bloqueados del tenant (feriados + bloqueos manuales)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS tenant_blocked_dates (
+  id           VARCHAR(36)  NOT NULL DEFAULT (UUID()),
+  tenant_id    VARCHAR(36)  NOT NULL,
+  date         DATE         NOT NULL,
+  reason       ENUM('feriado','manual') NOT NULL DEFAULT 'feriado',
+  holiday_name VARCHAR(255) NULL,
+  holiday_type VARCHAR(100) NULL,
+  is_unlocked  BOOLEAN      NOT NULL DEFAULT FALSE,
+  unlocked_at  DATETIME     NULL,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tenant_date (tenant_id, date),
+  INDEX idx_tbd_tenant (tenant_id),
+  INDEX idx_tbd_date   (tenant_id, date),
+  CONSTRAINT fk_tbd_tenant FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO feature_flags (tenant_id, flag_key, is_enabled) VALUES
+  ('00000000-0000-0000-0000-000000000001', 'enable_holiday_blocking', FALSE);
 
 SET FOREIGN_KEY_CHECKS = 1;

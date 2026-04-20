@@ -7,8 +7,8 @@ import { addOrderItem } from "@/lib/db/orders";
 type Ctx = { params: Promise<{ tenantId: string; id: string }> };
 
 const bodySchema = z.object({
-  product_id: z.string().uuid(),
-  variant_id: z.string().uuid().optional(),
+  product_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  variant_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
   quantity: z.number().int().positive(),
   notes: z.string().max(500).optional(),
 });

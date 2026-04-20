@@ -16,6 +16,8 @@ const loginBodySchema = z.object({
 
 type TenantRow = RowDataPacket & { id: string; slug: string };
 
+type BranchRow = RowDataPacket & { id: string; name: string };
+
 type UserRow = RowDataPacket & {
   id: string;
   password_hash: string;
@@ -96,11 +98,23 @@ export async function POST(request: Request) {
       can_delete: Boolean(row.can_delete),
     }));
 
+    const [branchRows] = await pool.query<BranchRow[]>(
+      `SELECT b.id, b.name
+       FROM user_branches ub
+       JOIN branches b ON b.id = ub.branch_id
+       WHERE ub.user_id = ? AND ub.is_primary = TRUE
+       LIMIT 1`,
+      [user.id],
+    );
+    const primaryBranch = branchRows[0] ?? null;
+
     const token = await signSessionToken({
       sub: user.id,
       tenantId: tenant.slug,
       role: user.role_name,
       email,
+      branchId: primaryBranch?.id ?? null,
+      branchName: primaryBranch?.name ?? null,
       permissions,
     });
 

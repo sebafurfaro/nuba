@@ -25,7 +25,7 @@ import {
   Text,
   TextArea,
 } from "@heroui/react";
-import { ArrowLeft, ImagePlus, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Building2, EyeOff, ImagePlus, Plus, Trash2, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -41,6 +41,9 @@ import {
   categoryTreeToSelectOptions,
   type CategorySelectOption,
 } from "@/lib/category-select-options";
+import { DialogSuccess } from "@/components/ui/DialogSuccess";
+import { DialogWarning } from "@/components/ui/DialogWarning";
+import type { BranchProduct } from "@/types/product";
 import {
   productoCreateFormSchema,
   type ProductoCreateFormInput,
@@ -128,6 +131,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [skuLocked, setSkuLocked] = useState(false);
+  const [activeTab, setActiveTab] = useState<"general" | "sucursales">("general");
 
   const form = useForm<
     ProductoCreateFormInput,
@@ -623,8 +627,43 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
         <Text className="mb-4 text-danger">{loadError}</Text>
       ) : null}
 
+      {/* Tab navigation — only in edit mode */}
+      {productId ? (
+        <div
+          className="mb-4 flex gap-1 border-b pb-px"
+          style={{ borderColor: "var(--nuba-border-subtle)" }}
+        >
+          {(
+            [
+              { key: "general", label: "General" },
+              { key: "sucursales", label: "Sucursales", icon: <Building2 className="size-4" /> },
+            ] as const
+          ).map(({ key, label, icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveTab(key)}
+              className="flex items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium outline-none transition-colors"
+              style={{
+                color:
+                  activeTab === key
+                    ? "var(--nuba-accent)"
+                    : "var(--nuba-fg-secondary)",
+                borderBottom:
+                  activeTab === key
+                    ? "2px solid var(--nuba-accent)"
+                    : "2px solid transparent",
+              }}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <form
-        className="flex flex-1 flex-col gap-6 pb-4"
+        className={`flex flex-1 flex-col gap-6 pb-4${productId && activeTab !== "general" ? " hidden" : ""}`}
         onSubmit={form.handleSubmit(onSubmit)}
       >
         <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-3">
@@ -1230,6 +1269,15 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
           </div>
         </footer>
       </form>
+
+      {/* Sucursales tab — only in edit mode */}
+      {productId && activeTab === "sucursales" ? (
+        <SucursalesTab
+          tenantId={tenantId}
+          productId={productId}
+          basePrice={form.watch("precio") ?? 0}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1308,5 +1356,413 @@ function EliminarProductoEditDialog({
         </AlertDialogContainer>
       </AlertDialogBackdrop>
     </AlertDialogRoot>
+  );
+}
+
+// ─── Sucursales Tab ───────────────────────────────────────────────────────────
+
+type SucursalesData = {
+  is_global: boolean;
+  assignments: BranchProduct[];
+  all_branches: { id: string; name: string; city: string | null; is_active: boolean }[];
+};
+
+function fmt(n: number) {
+  return n.toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function SucursalesTab({
+  tenantId,
+  productId,
+  basePrice,
+}: {
+  tenantId: string;
+  productId: string;
+  basePrice: number;
+}) {
+  const [data, setData] = useState<SucursalesData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isGlobal, setIsGlobal] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [savingBranch, setSavingBranch] = useState<string | null>(null);
+  const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
+  const [successMsg, setSuccessMsg] = useState("");
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [warnMsg, setWarnMsg] = useState("");
+  const [warnOpen, setWarnOpen] = useState(false);
+  const [confirmUnassign, setConfirmUnassign] = useState<{ branchId: string; branchName: string } | null>(null);
+  const [confirmGlobalOff, setConfirmGlobalOff] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/productos/${productId}/sucursales`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudieron cargar las sucursales");
+        setWarnOpen(true);
+        return;
+      }
+      const json = (await res.json()) as SucursalesData;
+      setData(json);
+      setIsGlobal(json.is_global);
+      // Inicializar inputs de precio desde las asignaciones
+      const inputs: Record<string, string> = {};
+      for (const a of json.assignments) {
+        inputs[a.branch_id] = a.price_override != null ? String(a.price_override) : "";
+      }
+      setPriceInputs(inputs);
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId, productId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Togglear is_global
+  async function handleGlobalToggle(newVal: boolean) {
+    if (!newVal) {
+      // Confirmar antes de desactivar global
+      setConfirmGlobalOff(true);
+      return;
+    }
+    await applyGlobalToggle(true);
+  }
+
+  async function applyGlobalToggle(newVal: boolean) {
+    setToggling(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/productos/${productId}/global`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ is_global: newVal }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudo actualizar");
+        setWarnOpen(true);
+        return;
+      }
+      setIsGlobal(newVal);
+      setSuccessMsg(
+        newVal
+          ? "Producto marcado como global — disponible en todas las sucursales"
+          : "El producto ahora es específico por sucursal",
+      );
+      setSuccessOpen(true);
+      await load();
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  // Asignar / desasignar
+  async function handleToggleBranch(branchId: string, assign: boolean) {
+    if (!assign) {
+      const branch = data?.all_branches.find((b) => b.id === branchId);
+      setConfirmUnassign({ branchId, branchName: branch?.name ?? branchId });
+      return;
+    }
+    setSavingBranch(branchId);
+    try {
+      const res = await fetch(`/api/${tenantId}/productos/${productId}/sucursales`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ branch_id: branchId }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudo asignar");
+        setWarnOpen(true);
+        return;
+      }
+      await load();
+    } finally {
+      setSavingBranch(null);
+    }
+  }
+
+  async function confirmUnassignBranch(branchId: string) {
+    setSavingBranch(branchId);
+    try {
+      const res = await fetch(
+        `/api/${tenantId}/productos/${productId}/sucursales/${branchId}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudo desasignar");
+        setWarnOpen(true);
+        return;
+      }
+      await load();
+    } finally {
+      setSavingBranch(null);
+      setConfirmUnassign(null);
+    }
+  }
+
+  // Guardar precio override al perder foco
+  async function handlePriceBlur(branchId: string) {
+    const raw = priceInputs[branchId] ?? "";
+    const parsed = raw === "" ? null : Number(raw);
+    if (raw !== "" && (isNaN(parsed!) || parsed! <= 0)) return; // valor inválido
+
+    setSavingBranch(branchId);
+    try {
+      const res = await fetch(
+        `/api/${tenantId}/productos/${productId}/sucursales/${branchId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ price_override: parsed }),
+        },
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudo guardar el precio");
+        setWarnOpen(true);
+      } else {
+        await load();
+      }
+    } finally {
+      setSavingBranch(null);
+    }
+  }
+
+  const glassStyle = {
+    background: "var(--nuba-glass-surface)",
+    backdropFilter: "blur(var(--nuba-glass-blur-sm))",
+  } as const;
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-3 animate-pulse">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-16 rounded-xl" style={{ background: "var(--nuba-raised)" }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  // Construir vista de sucursales
+  const branchRows = data.all_branches.filter((b) => b.is_active).map((branch) => {
+    const assignment = data.assignments.find((a) => a.branch_id === branch.id);
+    const isAssigned = isGlobal
+      ? assignment == null || assignment.is_active  // global: activo salvo exclusión explícita
+      : assignment != null && assignment.is_active;  // específico: sólo si está asignado y activo
+    const priceOverride = priceInputs[branch.id] ?? "";
+    const effectivePrice =
+      priceOverride !== "" && !isNaN(Number(priceOverride)) && Number(priceOverride) > 0
+        ? Number(priceOverride)
+        : basePrice;
+
+    return { branch, assignment, isAssigned, priceOverride, effectivePrice };
+  });
+
+  return (
+    <>
+      <DialogSuccess
+        isOpen={successOpen}
+        onClose={() => setSuccessOpen(false)}
+        title="Cambio guardado"
+        description={successMsg}
+      />
+      <DialogWarning
+        isOpen={warnOpen}
+        onClose={() => setWarnOpen(false)}
+        title="Error"
+        description={warnMsg}
+        confirmLabel="Entendido"
+        cancelLabel="Cerrar"
+        onConfirm={() => setWarnOpen(false)}
+      />
+      <DialogWarning
+        isOpen={confirmGlobalOff}
+        onClose={() => setConfirmGlobalOff(false)}
+        title="Cambiar a específico por sucursal"
+        description="El producto dejará de estar disponible en sucursales donde no esté asignado explícitamente. Las asignaciones existentes se mantienen."
+        confirmLabel="Continuar"
+        cancelLabel="Cancelar"
+        onConfirm={async () => {
+          setConfirmGlobalOff(false);
+          await applyGlobalToggle(false);
+        }}
+      />
+      <DialogWarning
+        isOpen={!!confirmUnassign}
+        onClose={() => setConfirmUnassign(null)}
+        title={`Excluir de ${confirmUnassign?.branchName ?? "la sucursal"}`}
+        description="El producto dejará de estar disponible en esta sucursal. Podés volver a asignarlo cuando quieras."
+        confirmLabel="Sí, excluir"
+        cancelLabel="Cancelar"
+        onConfirm={async () => {
+          if (confirmUnassign) await confirmUnassignBranch(confirmUnassign.branchId);
+        }}
+      />
+
+      <div className="flex flex-col gap-6 pb-6">
+        {/* Global toggle card */}
+        <Card.Root className="border border-border-subtle" style={glassStyle}>
+          <Card.Content className="flex items-center justify-between gap-4 py-4">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium" style={{ color: "var(--nuba-fg)" }}>
+                Producto global
+              </span>
+              <span className="text-xs" style={{ color: "var(--nuba-fg-muted)" }}>
+                {isGlobal
+                  ? "Disponible en todas las sucursales"
+                  : "Asignado a sucursales específicas"}
+              </span>
+            </div>
+            <div className={toggling ? "pointer-events-none opacity-50" : undefined}>
+              <SwitchRoot
+                isSelected={isGlobal}
+                onChange={(v) => void handleGlobalToggle(v)}
+              >
+                <SwitchControl>
+                  <SwitchThumb />
+                </SwitchControl>
+              </SwitchRoot>
+            </div>
+          </Card.Content>
+        </Card.Root>
+
+        {/* Branch rows */}
+        <Card.Root className="border border-border-subtle" style={glassStyle}>
+          <Card.Header>
+            <Card.Title>Sucursales</Card.Title>
+            {isGlobal ? (
+              <Card.Description>
+                El producto está disponible en todas las sucursales. Podés configurar un precio diferente o excluirlo de alguna.
+              </Card.Description>
+            ) : (
+              <Card.Description>
+                Activá las sucursales donde querés que esté disponible este producto.
+              </Card.Description>
+            )}
+          </Card.Header>
+          <Card.Content className="flex flex-col">
+            {branchRows.length === 0 ? (
+              <p className="py-4 text-sm" style={{ color: "var(--nuba-fg-muted)" }}>
+                No hay sucursales activas en el tenant.
+              </p>
+            ) : (
+              branchRows.map(({ branch, isAssigned, priceOverride, effectivePrice }, idx) => {
+                const isSaving = savingBranch === branch.id;
+                const isLast = idx === branchRows.length - 1;
+
+                return (
+                  <div
+                    key={branch.id}
+                    className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:gap-4"
+                    style={{
+                      opacity: !isAssigned ? 0.5 : 1,
+                      borderBottom: !isLast ? "1px solid var(--nuba-border-subtle)" : undefined,
+                    }}
+                  >
+                    {/* Branch info */}
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="text-sm font-medium" style={{ color: "var(--nuba-fg)" }}>
+                        {branch.name}
+                      </span>
+                      {branch.city ? (
+                        <span className="text-xs" style={{ color: "var(--nuba-fg-muted)" }}>
+                          {branch.city}
+                        </span>
+                      ) : null}
+                      {isGlobal ? (
+                        <span
+                          className="w-fit rounded-full px-2 py-0.5 text-xs font-medium"
+                          style={{
+                            background: "var(--nuba-accent-soft)",
+                            color: "var(--nuba-accent)",
+                          }}
+                        >
+                          Global
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Price override input */}
+                    {isAssigned ? (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs" style={{ color: "var(--nuba-fg-muted)" }}>
+                          Precio en esta sucursal
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm" style={{ color: "var(--nuba-fg-muted)" }}>$</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            min="0"
+                            placeholder={`Base: $${fmt(basePrice)}`}
+                            className="w-36 rounded-lg border px-2 py-1.5 text-sm focus:outline-none"
+                            style={{
+                              background: "var(--nuba-raised)",
+                              borderColor: "var(--nuba-border-default)",
+                              color: "var(--nuba-fg)",
+                            }}
+                            value={priceOverride}
+                            onChange={(e) =>
+                              setPriceInputs((p) => ({ ...p, [branch.id]: e.target.value }))
+                            }
+                            onBlur={() => void handlePriceBlur(branch.id)}
+                            disabled={isSaving}
+                          />
+                        </div>
+                        <span className="text-xs" style={{ color: "var(--nuba-fg-muted)" }}>
+                          Precio efectivo: ${fmt(effectivePrice)}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    {/* Actions */}
+                    <div className="flex shrink-0 items-center gap-2">
+                      {isGlobal && isAssigned ? (
+                        <button
+                          type="button"
+                          title="Excluir de esta sucursal"
+                          className="rounded p-1.5 transition-colors hover:bg-raised"
+                          style={{ color: "var(--nuba-fg-muted)" }}
+                          disabled={isSaving}
+                          onClick={() => void handleToggleBranch(branch.id, false)}
+                        >
+                          <EyeOff className="size-4" />
+                        </button>
+                      ) : !isGlobal ? (
+                        <SwitchRoot
+                          isSelected={isAssigned}
+                          isDisabled={isSaving}
+                          onChange={(v) => void handleToggleBranch(branch.id, v)}
+                        >
+                          <SwitchControl>
+                            <SwitchThumb />
+                          </SwitchControl>
+                        </SwitchRoot>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </Card.Content>
+        </Card.Root>
+      </div>
+    </>
   );
 }
