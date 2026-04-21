@@ -1,6 +1,7 @@
 import type { Session } from "next-auth";
 import { NextResponse } from "next/server";
 import type { RowDataPacket } from "mysql2/promise";
+import { cache } from "react";
 
 import { auth } from "@/auth";
 import { pool } from "@/lib/db";
@@ -11,26 +12,37 @@ export type TenantSessionOk = {
   tenantUuid: string;
 };
 
-export async function getTenantSession(
-  tenantSlug: string,
-): Promise<TenantSessionOk | NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id || !session.user.tenantId) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
-  if (session.user.tenantId !== tenantSlug) {
-    return NextResponse.json({ error: "Tenant inválido" }, { status: 403 });
-  }
+// Cache de resolución de tenant — se deduplica por request
+const resolveTenantId = cache(async (slug: string): Promise<string | null> => {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT id FROM tenants WHERE slug = ? AND is_active = TRUE LIMIT 1`,
-    [tenantSlug],
+    [slug],
   );
-  const id = (rows[0] as { id: string } | undefined)?.id;
-  if (!id) {
-    return NextResponse.json({ error: "Tenant no encontrado" }, { status: 404 });
-  }
-  return { session, tenantUuid: id };
-}
+  return (rows[0] as { id: string } | undefined)?.id ?? null;
+});
+
+// Cache de sesión completa — se deduplica por request
+export const getTenantSession = cache(
+  async (
+    tenantSlug: string,
+  ): Promise<TenantSessionOk | NextResponse> => {
+    const session = await auth();
+    if (!session?.user?.id || !session.user.tenantId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+    if (session.user.tenantId !== tenantSlug) {
+      return NextResponse.json({ error: "Tenant inválido" }, { status: 403 });
+    }
+    const id = await resolveTenantId(tenantSlug);
+    if (!id) {
+      return NextResponse.json(
+        { error: "Tenant no encontrado" },
+        { status: 404 },
+      );
+    }
+    return { session, tenantUuid: id };
+  },
+);
 
 export function requireAdminOrSupervisor(role: Role): NextResponse | null {
   if (role !== "admin" && role !== "supervisor") {

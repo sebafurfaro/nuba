@@ -121,40 +121,23 @@ export async function getProducts(
     );
   }
 
-  const products: ProductListItem[] = [];
-  for (const r of prodRows) {
-    let food_cost_percentage: number | null = null;
-    const recipeId = r.recipe_id as string | null;
-    if (recipeId) {
-      try {
-        const costs = await calculateRecipeCost(tenantUuid, recipeId);
-        const portionSize = num(r.portion_size) || 1;
-        const food_cost = costs.cost_per_portion * portionSize;
-        const priceNum = num(r.discount_price != null ? r.discount_price : r.price);
-        food_cost_percentage = priceNum > 0 ? (food_cost / priceNum) * 100 : 0;
-      } catch {
-        food_cost_percentage = null;
-      }
-    }
-
-    products.push({
-      id: r.id as string,
-      name: r.name as string,
-      sku: (r.sku as string | null) ?? null,
-      image_url: (r.image_url as string | null) ?? null,
-      price: num(r.price),
-      discount_price: r.discount_price == null ? null : num(r.discount_price),
-      stock: num(r.stock),
-      track_stock: mapDbBool(r.track_stock),
-      is_active: mapDbBool(r.is_active),
-      recipe_id: recipeId,
-      category_id: (r.category_id as string | null) ?? null,
-      category_name: (r.category_name as string | null) ?? null,
-      food_cost_percentage,
-    });
-  }
-
-  return products;
+  // food_cost_percentage se calcula solo en el detalle (getProductById) para
+  // evitar un N+1 de calculateRecipeCost en listados grandes.
+  return prodRows.map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    sku: (r.sku as string | null) ?? null,
+    image_url: (r.image_url as string | null) ?? null,
+    price: num(r.price),
+    discount_price: r.discount_price == null ? null : num(r.discount_price),
+    stock: num(r.stock),
+    track_stock: mapDbBool(r.track_stock),
+    is_active: mapDbBool(r.is_active),
+    recipe_id: (r.recipe_id as string | null) ?? null,
+    category_id: (r.category_id as string | null) ?? null,
+    category_name: (r.category_name as string | null) ?? null,
+    food_cost_percentage: null,
+  }));
 }
 
 export type ProductVariantRow = {

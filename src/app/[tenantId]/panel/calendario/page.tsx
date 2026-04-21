@@ -7,11 +7,32 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-import FullCalendar from "@fullcalendar/react";
+import dynamic from "next/dynamic";
+import type FullCalendarType from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
+
+const FullCalendar = dynamic(() => import("@fullcalendar/react"), {
+  ssr: false,
+  loading: () => (
+    <div
+      style={{
+        height: 500,
+        background: "var(--background-raised)",
+        borderRadius: 12,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "var(--foreground-muted)",
+        fontSize: 14,
+      }}
+    >
+      Cargando calendario...
+    </div>
+  ),
+}) as unknown as typeof FullCalendarType;
 
 import {
   BadgeLabel,

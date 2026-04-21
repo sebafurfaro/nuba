@@ -310,36 +310,81 @@ export async function getLocations(
   sql += ` ORDER BY l.sort_order ASC, l.name ASC`;
   const [locRows] = await pool.query<RowDataPacket[]>(sql, params);
 
+  if (!locRows.length) {
+    return [];
+  }
+
+  const locationIds = locRows.map((r) => r.id as string);
   const ordersByLocation = new Map<string, Order[]>();
+
   try {
-    const [activeRows] = await pool.query<RowDataPacket[]>(
+    // Query bulk: órdenes activas + su status por JOIN, filtradas a las
+    // ubicaciones visibles (respeta los filtros de branch/type aplicados arriba).
+    const locPlaceholders = locationIds.map(() => "?").join(",");
+    const [orderRows] = await pool.query<RowDataPacket[]>(
       `SELECT o.id, o.tenant_id, o.location_id, o.table_id, o.customer_id, o.customer_name,
-            o.customer_phone, o.delivery_address, o.user_id, o.status_key, o.type,
-            o.subtotal, o.discount, o.tax, o.total, o.notes, o.created_at, o.updated_at
-     FROM orders o
-     INNER JOIN order_statuses os
-       ON os.tenant_id = o.tenant_id AND os.\`key\` = o.status_key
-     WHERE o.tenant_id = ? AND os.is_terminal = FALSE AND o.location_id IS NOT NULL`,
-      [tenantId],
+              o.customer_phone, o.delivery_address, o.user_id, o.status_key, o.type,
+              o.subtotal, o.discount, o.tax, o.total, o.notes, o.created_at, o.updated_at,
+              os.id              AS os_id,
+              os.label           AS os_label,
+              os.color           AS os_color,
+              os.sort_order      AS os_sort_order,
+              os.triggers_stock  AS os_triggers_stock,
+              os.is_terminal     AS os_is_terminal,
+              os.is_cancellable  AS os_is_cancellable
+       FROM orders o
+       INNER JOIN order_statuses os
+         ON os.tenant_id = o.tenant_id AND os.\`key\` = o.status_key
+       WHERE o.tenant_id = ?
+         AND os.is_terminal = FALSE
+         AND o.location_id IN (${locPlaceholders})
+       ORDER BY o.created_at ASC`,
+      [tenantId, ...locationIds],
     );
-    const conn = await pool.getConnection();
-    try {
-      for (const or of activeRows) {
+
+    if (orderRows.length) {
+      // Query bulk: todos los ítems de esas órdenes en un solo viaje.
+      const orderIds = orderRows.map((r) => r.id as string);
+      const itemPlaceholders = orderIds.map(() => "?").join(",");
+      const [itemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT oi.id, oi.order_id, oi.product_id, oi.variant_id, oi.name, oi.unit_price,
+                oi.quantity, oi.subtotal, oi.notes
+         FROM order_items oi
+         WHERE oi.tenant_id = ? AND oi.order_id IN (${itemPlaceholders})
+         ORDER BY oi.id ASC`,
+        [tenantId, ...orderIds],
+      );
+
+      const itemsByOrder = new Map<string, OrderItem[]>();
+      for (const ir of itemRows) {
+        const oid = ir.order_id as string;
+        const list = itemsByOrder.get(oid) ?? [];
+        list.push(mapOrderItem(ir));
+        itemsByOrder.set(oid, list);
+      }
+
+      for (const or of orderRows) {
         const locId = or.location_id as string | null;
         if (!locId) {
           continue;
         }
-        try {
-          const order = await hydrateOrder(conn, tenantId, or);
-          const list = ordersByLocation.get(locId) ?? [];
-          list.push(order);
-          ordersByLocation.set(locId, list);
-        } catch (rowErr) {
-          console.warn("[getLocations] omitiendo orden en preview", or.id, rowErr);
-        }
+        const items = itemsByOrder.get(or.id as string) ?? [];
+        const status: OrderStatus = {
+          id: or.os_id as string,
+          tenant_id: or.tenant_id as string,
+          key: String(or.status_key),
+          label: String(or.os_label),
+          color: String(or.os_color),
+          sort_order: num(or.os_sort_order),
+          triggers_stock: mapDbBool(or.os_triggers_stock),
+          is_terminal: mapDbBool(or.os_is_terminal),
+          is_cancellable: mapDbBool(or.os_is_cancellable),
+        };
+        const order = mapOrderBase(or, items, undefined, status);
+        const list = ordersByLocation.get(locId) ?? [];
+        list.push(order);
+        ordersByLocation.set(locId, list);
       }
-    } finally {
-      conn.release();
     }
   } catch (e) {
     console.warn(

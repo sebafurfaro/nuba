@@ -75,3 +75,17 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+-- sort_order
+SET @exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'categories' AND COLUMN_NAME = 'sort_order'
+);
+SET @sql := IF(
+  @exists = 0,
+  'ALTER TABLE categories ADD COLUMN sort_order INT NOT NULL DEFAULT 0',
+  'SELECT 1 AS _skip'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

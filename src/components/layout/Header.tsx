@@ -1,7 +1,7 @@
 "use client";
 
 import { Menu, Moon, Sun } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/providers";
 import { useEffect, useState } from "react";
 
 import { Button, Header as HeroHeader, Text } from "@heroui/react";
