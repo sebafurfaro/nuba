@@ -7,6 +7,7 @@ import {
   getRecipeCostBreakdown,
 } from "@/lib/db/recipes";
 import type { UnitType } from "@/types/ingredient";
+import type { CSVProductRow, ImportResult, ImportRowError } from "@/types/product";
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -809,4 +810,197 @@ export async function makeProductBranchSpecific(
     `UPDATE products SET is_global = FALSE WHERE tenant_id = ? AND id = ?`,
     [tenantUuid, productId],
   );
+}
+
+// ─── CSV Import ───────────────────────────────────────────────────────────────
+
+export type { CSVProductRow, ImportResult, ImportRowError };
+
+export async function importProductsFromCSV(
+  tenantId: string,
+  rows: CSVProductRow[],
+): Promise<ImportResult> {
+  const result: ImportResult = {
+    total: rows.length,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: [],
+  };
+
+  // Cargar categorías activas del tenant en memoria para evitar una query por fila
+  const [catRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT id, name FROM categories WHERE tenant_id = ? AND is_active = TRUE`,
+    [tenantId],
+  );
+  const categoryCache = new Map<string, string>(
+    (catRows as { id: string; name: string }[]).map((c) => [
+      c.name.toLowerCase().trim(),
+      c.id,
+    ]),
+  );
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const rowNum = i + 2; // +2 porque fila 1 es el header
+
+    try {
+      // ── Validaciones ──────────────────────────────────────────────────────
+
+      if (!row.nombre?.trim()) {
+        result.errors.push({
+          row: rowNum,
+          sku: row.sku ?? "",
+          nombre: "",
+          error: "El nombre es requerido",
+        });
+        result.skipped++;
+        continue;
+      }
+
+      const precio = parseFloat(row.precio ?? "");
+      if (isNaN(precio) || precio <= 0) {
+        result.errors.push({
+          row: rowNum,
+          sku: row.sku ?? "",
+          nombre: row.nombre,
+          error: `Precio inválido: "${row.precio}"`,
+        });
+        result.skipped++;
+        continue;
+      }
+
+      const precioDescuento = row.precio_descuento?.trim()
+        ? parseFloat(row.precio_descuento)
+        : null;
+      if (precioDescuento !== null) {
+        if (isNaN(precioDescuento) || precioDescuento <= 0) {
+          result.errors.push({
+            row: rowNum,
+            sku: row.sku ?? "",
+            nombre: row.nombre,
+            error: `Precio descuento inválido: "${row.precio_descuento}"`,
+          });
+          result.skipped++;
+          continue;
+        }
+        if (precioDescuento >= precio) {
+          result.errors.push({
+            row: rowNum,
+            sku: row.sku ?? "",
+            nombre: row.nombre,
+            error: "El precio descuento debe ser menor al precio base",
+          });
+          result.skipped++;
+          continue;
+        }
+      }
+
+      const stock = row.stock?.trim() ? parseInt(row.stock, 10) : 0;
+      if (isNaN(stock) || stock < 0) {
+        result.errors.push({
+          row: rowNum,
+          sku: row.sku ?? "",
+          nombre: row.nombre,
+          error: `Stock inválido: "${row.stock}"`,
+        });
+        result.skipped++;
+        continue;
+      }
+
+      const isActive =
+        !row.activo?.trim() ||
+        ["true", "1", "si", "sí", "yes"].includes(
+          row.activo.toLowerCase().trim(),
+        );
+
+      // ── Categoría ─────────────────────────────────────────────────────────
+
+      let categoryId: string | null = null;
+      if (row.categoria?.trim()) {
+        const catKey = row.categoria.toLowerCase().trim();
+        if (categoryCache.has(catKey)) {
+          categoryId = categoryCache.get(catKey)!;
+        } else {
+          const newCatId = crypto.randomUUID();
+          await pool.execute<ResultSetHeader>(
+            `INSERT INTO categories (id, tenant_id, name, level, sort_order, is_active)
+             VALUES (?, ?, ?, 0, 0, TRUE)`,
+            [newCatId, tenantId, row.categoria.trim()],
+          );
+          categoryCache.set(catKey, newCatId);
+          categoryId = newCatId;
+        }
+      }
+
+      // ── SKU ───────────────────────────────────────────────────────────────
+
+      const sku =
+        row.sku?.trim() ||
+        `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+      // ── Upsert ────────────────────────────────────────────────────────────
+
+      const [existing] = await pool.execute<RowDataPacket[]>(
+        `SELECT id FROM products WHERE tenant_id = ? AND sku = ? LIMIT 1`,
+        [tenantId, sku],
+      );
+
+      if ((existing as RowDataPacket[]).length > 0) {
+        const existingId = (existing as { id: string }[])[0]!.id;
+        await pool.execute<ResultSetHeader>(
+          `UPDATE products SET
+             name = ?, description = ?, category_id = ?,
+             price = ?, discount_price = ?, stock = ?,
+             is_active = ?, updated_at = NOW()
+           WHERE id = ? AND tenant_id = ?`,
+          [
+            row.nombre.trim(),
+            row.descripcion?.trim() || null,
+            categoryId,
+            precio,
+            precioDescuento,
+            stock,
+            isActive ? 1 : 0,
+            existingId,
+            tenantId,
+          ],
+        );
+        result.updated++;
+      } else {
+        const newId = crypto.randomUUID();
+        await pool.execute<ResultSetHeader>(
+          `INSERT INTO products
+             (id, tenant_id, sku, name, description,
+              category_id, price, discount_price,
+              stock, track_stock, is_active, is_global)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, TRUE)`,
+          [
+            newId,
+            tenantId,
+            sku,
+            row.nombre.trim(),
+            row.descripcion?.trim() || null,
+            categoryId,
+            precio,
+            precioDescuento,
+            stock,
+            isActive ? 1 : 0,
+          ],
+        );
+        result.created++;
+      }
+    } catch (err) {
+      console.error(`[CSV Import] Error en fila ${rowNum}:`, err);
+      result.errors.push({
+        row: rowNum,
+        sku: row.sku ?? "",
+        nombre: row.nombre ?? "",
+        error: "Error interno al procesar esta fila",
+      });
+      result.skipped++;
+    }
+  }
+
+  return result;
 }

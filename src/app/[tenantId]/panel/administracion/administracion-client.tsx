@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useImageConverter } from "@/hooks";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -101,6 +102,7 @@ const profileSchema = z.object({
   city: z.string().max(100).optional().nullable(),
   province: z.string().max(100).optional().nullable(),
   logo_url: z.string().optional().nullable(),
+  banner_url: z.string().optional().nullable(),
   website: z
     .string()
     .optional()
@@ -132,6 +134,17 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
   const [loadError, setLoadError] = useState(false);
   const [flagLoading, setFlagLoading] = useState<Partial<Record<FeatureFlagKey, boolean>>>({});
   const [logoUploading, setLogoUploading] = useState(false);
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const {
+    convert: convertLogo,
+    isConverting: logoConverting,
+    compressionRatio: logoCompressionRatio,
+  } = useImageConverter({ quality: 0.9, maxWidth: 400, maxHeight: 400 });
+  const {
+    convert: convertBanner,
+    isConverting: bannerConverting,
+    compressionRatio: bannerCompressionRatio,
+  } = useImageConverter({ quality: 0.85, maxWidth: 1920, maxHeight: 640 });
 
   const [successOpen, setSuccessOpen] = useState(false);
   const [warnOpen, setWarnOpen] = useState(false);
@@ -140,6 +153,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
   const [flagWarnMsg, setFlagWarnMsg] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -152,6 +166,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       city: "",
       province: "",
       logo_url: "",
+      banner_url: "",
       website: "",
       instagram: "",
       facebook: "",
@@ -161,6 +176,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
 
   const descriptionValue = form.watch("description") ?? "";
   const logoUrl = form.watch("logo_url");
+  const bannerUrl = form.watch("banner_url");
 
   // ─── Data loading ──────────────────────────────────────────────────────────
 
@@ -197,6 +213,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
         city: profileData.city ?? "",
         province: profileData.province ?? "",
         logo_url: profileData.logo_url ?? "",
+        banner_url: profileData.banner_url ?? "",
         website: profileData.website ?? "",
         instagram: profileData.instagram ?? "",
         facebook: profileData.facebook ?? "",
@@ -225,6 +242,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       city: data.city || null,
       province: data.province || null,
       logo_url: data.logo_url || null,
+      banner_url: data.banner_url || null,
       website: data.website || null,
       instagram: data.instagram || null,
       facebook: data.facebook || null,
@@ -256,6 +274,7 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       city: updated.city ?? "",
       province: updated.province ?? "",
       logo_url: updated.logo_url ?? "",
+      banner_url: updated.banner_url ?? "",
       website: updated.website ?? "",
       instagram: updated.instagram ?? "",
       facebook: updated.facebook ?? "",
@@ -318,8 +337,9 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
     }
     setLogoUploading(true);
     try {
+      const webpFile = await convertLogo(file);
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", webpFile);
       const res = await fetch(`/api/${tenantId}/subidas`, {
         method: "POST",
         credentials: "include",
@@ -338,6 +358,45 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       setWarnOpen(true);
     } finally {
       setLogoUploading(false);
+    }
+  }
+
+  // ─── Banner upload ─────────────────────────────────────────────────────────
+
+  async function handleBannerFile(file: File) {
+    if (file.size > 4 * 1024 * 1024) {
+      setWarnMsg("El archivo no puede superar 4MB");
+      setWarnOpen(true);
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setWarnMsg("Solo se aceptan archivos jpg, png o webp");
+      setWarnOpen(true);
+      return;
+    }
+    setBannerUploading(true);
+    try {
+      const webpFile = await convertBanner(file);
+      const fd = new FormData();
+      fd.append("file", webpFile);
+      const res = await fetch(`/api/${tenantId}/subidas`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string };
+        setWarnMsg(j?.error ?? "No se pudo subir el banner");
+        setWarnOpen(true);
+        return;
+      }
+      const j = (await res.json()) as { url: string };
+      form.setValue("banner_url", j.url, { shouldDirty: true });
+    } catch {
+      setWarnMsg("No se pudo subir el banner");
+      setWarnOpen(true);
+    } finally {
+      setBannerUploading(false);
     }
   }
 
@@ -778,6 +837,110 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
                           jpg · png · webp · máx 2MB
                         </span>
                       </button>
+                    )}
+                  {logoConverting && (
+                    <p style={{ fontSize: 11, color: "var(--foreground-muted)", marginTop: 4 }}>
+                      Optimizando imagen...
+                    </p>
+                  )}
+                  {!logoConverting && logoCompressionRatio !== null && logoCompressionRatio > 0 && (
+                    <p style={{ fontSize: 11, color: "var(--success)", marginTop: 4 }}>
+                      Imagen optimizada — {logoCompressionRatio}% más liviana
+                    </p>
+                  )}
+                  </Card.Content>
+                </Card.Root>
+
+                {/* Banner */}
+                <Card.Root
+                  className="border border-border-subtle"
+                  style={glassStyle}
+                >
+                  <Card.Header>
+                    <Card.Title>Banner</Card.Title>
+                    <Card.Description>
+                      Imagen de portada del local (16:9 recomendado)
+                    </Card.Description>
+                  </Card.Header>
+                  <Card.Content className="flex flex-col gap-2">
+                    <input
+                      ref={bannerInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleBannerFile(f);
+                        e.target.value = "";
+                      }}
+                    />
+
+                    {bannerUrl ? (
+                      <div
+                        className="relative w-full overflow-hidden rounded-xl border"
+                        style={{ aspectRatio: "16/5", borderColor: "var(--nuba-border-default)" }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={bannerUrl}
+                          alt="Banner del local"
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          className="absolute top-2 right-2 rounded-full p-1 transition-opacity hover:opacity-80"
+                          style={{
+                            background: "var(--nuba-danger-soft)",
+                            color: "var(--nuba-danger)",
+                          }}
+                          onClick={() =>
+                            form.setValue("banner_url", "", { shouldDirty: true })
+                          }
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="flex w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed py-8 transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ borderColor: "var(--nuba-border-default)" }}
+                        disabled={bannerUploading}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const f = e.dataTransfer.files[0];
+                          if (f) void handleBannerFile(f);
+                        }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onClick={() => bannerInputRef.current?.click()}
+                      >
+                        <ImagePlus
+                          className="size-8"
+                          style={{ color: "var(--nuba-fg-muted)" }}
+                        />
+                        <span
+                          className="text-sm"
+                          style={{ color: "var(--nuba-fg-muted)" }}
+                        >
+                          {bannerUploading ? "Subiendo..." : "Subir banner"}
+                        </span>
+                        <span
+                          className="text-xs"
+                          style={{ color: "var(--nuba-fg-muted)" }}
+                        >
+                          jpg · png · webp · máx 4MB
+                        </span>
+                      </button>
+                    )}
+                    {bannerConverting && (
+                      <p style={{ fontSize: 11, color: "var(--foreground-muted)" }}>
+                        Optimizando imagen...
+                      </p>
+                    )}
+                    {!bannerConverting && bannerCompressionRatio !== null && bannerCompressionRatio > 0 && (
+                      <p style={{ fontSize: 11, color: "var(--success)" }}>
+                        Imagen optimizada — {bannerCompressionRatio}% más liviana
+                      </p>
                     )}
                   </Card.Content>
                 </Card.Root>

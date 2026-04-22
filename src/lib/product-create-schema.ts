@@ -92,7 +92,6 @@ const productoCreateFormBaseSchema = z.object({
   ingredientes_inline: z
     .array(ingredienteInlineFormSchema)
     .max(40)
-    .optional()
     .default([]),
   variaciones: z.array(variacionFormSchema).optional().default([]),
 });

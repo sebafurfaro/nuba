@@ -627,6 +627,61 @@ export async function removeRecipeItem(
   }
 }
 
+export async function updateRecipeItem(
+  tenantId: string,
+  recipeId: string,
+  itemId: string,
+  data: { quantity: number; unit: UnitType },
+): Promise<void> {
+  const [res] = await pool.query<ResultSetHeader>(
+    `UPDATE recipe_items SET quantity = ?, unit = ?
+     WHERE tenant_id = ? AND recipe_id = ? AND id = ?`,
+    [data.quantity, data.unit, tenantId, recipeId, itemId],
+  );
+  if (res.affectedRows === 0) {
+    throw new Error("Ítem de receta no encontrado");
+  }
+}
+
+/**
+ * Asegura que el producto tenga una receta asociada.
+ * Si no tiene, crea la receta y actualiza el producto.
+ * Devuelve el `recipe_id` vigente.
+ */
+export async function ensureProductRecipe(
+  tenantId: string,
+  productId: string,
+  productName: string,
+  currentRecipeId: string | null,
+): Promise<string> {
+  if (currentRecipeId) {
+    return currentRecipeId;
+  }
+  const recipeId = crypto.randomUUID();
+  const label = `${productName.trim().slice(0, 200)} — ingredientes`.slice(0, 255);
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query<ResultSetHeader>(
+      `INSERT INTO recipes (
+        id, tenant_id, name, description, yield_quantity, yield_unit, is_sub_recipe
+      ) VALUES (?, ?, ?, NULL, 1, 'porciones', FALSE)`,
+      [recipeId, tenantId, label],
+    );
+    await conn.query<ResultSetHeader>(
+      `UPDATE products SET recipe_id = ? WHERE tenant_id = ? AND id = ?`,
+      [recipeId, tenantId, productId],
+    );
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+  return recipeId;
+}
+
 export async function calculateRecipeCost(
   tenantId: string,
   recipeId: string,

@@ -43,3 +43,31 @@ export type Product = {
   /** Asignaciones por sucursal (populado en detalle). */
   branch_assignments?: BranchProduct[];
 };
+
+// ─── CSV Import ───────────────────────────────────────────────────────────────
+
+export type CSVProductRow = {
+  nombre: string;
+  descripcion?: string;
+  sku?: string;
+  categoria?: string;
+  precio: string;
+  precio_descuento?: string;
+  stock?: string;
+  activo?: string;
+};
+
+export type ImportRowError = {
+  row: number;
+  sku: string;
+  nombre: string;
+  error: string;
+};
+
+export type ImportResult = {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: ImportRowError[];
+};

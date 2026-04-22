@@ -15,8 +15,6 @@ import {
   AvatarFallback,
   AvatarImage,
   AvatarRoot,
-  BadgeLabel,
-  BadgeRoot,
   Button,
   Input,
   Skeleton,
@@ -26,13 +24,14 @@ import {
   Text,
   toast,
 } from "@heroui/react";
-import { Eye, PackageOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { Eye, FileCheck, FileUp, PackageOpen, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { PanelPageHeader } from "@/components/panel/PanelPageHeader";
 import type { CategorySelectOption } from "@/lib/category-select-options";
 import type { Role } from "@/lib/permissions";
+import type { ImportResult } from "@/types/product";
 
 export type ProductoListItem = {
   id: string;
@@ -109,6 +108,62 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
   const [error, setError] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductoListItem[]>([]);
   const [categories, setCategories] = useState<CategoriaOption[]>([]);
+
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  function downloadTemplate() {
+    const headers = ["nombre", "descripcion", "sku", "categoria", "precio", "precio_descuento", "stock", "activo"];
+    const exampleRows = [
+      ["Cappuccino", "Café con leche espumada", "CAP-001", "Bebidas Calientes", "1500", "", "50", "true"],
+      ["Flat White", "Doble espresso con leche", "FLW-001", "Bebidas Calientes", "1800", "1500", "30", "true"],
+      ["Brownie", "Brownie de chocolate", "BRW-001", "Postres", "900", "", "20", "true"],
+    ];
+    const csvContent = [headers.join(","), ...exampleRows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nuba-productos-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImport() {
+    if (!importFile) return;
+    setImportLoading(true);
+    setImportError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+      const res = await fetch(`/api/${tenantId}/productos/importar`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      const json = (await res.json()) as ImportResult & { error?: string };
+      if (!res.ok) {
+        setImportError(json.error ?? "Error al importar");
+        return;
+      }
+      setImportResult(json);
+      await load();
+    } catch {
+      setImportError("Error de conexión al importar");
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
+  function closeImportModal() {
+    setShowImportModal(false);
+    setImportFile(null);
+    setImportResult(null);
+    setImportError(null);
+  }
 
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
@@ -216,16 +271,53 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
       <PanelPageHeader
         title="Productos"
         end={
-          <Button
-            variant="primary"
-            className="bg-accent text-accent-text hover:bg-accent-hover"
-            onPress={() =>
-              router.push(`/${tenantId}/panel/productos/crear`)
-            }
-          >
-            <Plus className="size-4 shrink-0" />
-            Nuevo producto
-          </Button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {canMutate && (
+              <>
+                <button
+                  onClick={downloadTemplate}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--accent)",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    padding: "0 4px",
+                  }}
+                >
+                  Descargar template
+                </button>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border-default)",
+                    background: "var(--background-raised)",
+                    color: "var(--foreground-secondary)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Upload size={15} />
+                  Importar CSV
+                </button>
+              </>
+            )}
+            <Button
+              variant="primary"
+              className="bg-accent text-accent-text hover:bg-accent-hover"
+              onPress={() => router.push(`/${tenantId}/panel/productos/crear`)}
+            >
+              <Plus className="size-4 shrink-0" />
+              Nuevo producto
+            </Button>
+          </div>
         }
       />
 
@@ -381,14 +473,11 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
                       ) : null}
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <BadgeRoot
-                        variant="soft"
-                        className="border border-border-subtle bg-raised text-foreground-secondary"
-                      >
-                        <BadgeLabel className="text-xs">
-                          {p.category_name ?? "Sin categoría"}
-                        </BadgeLabel>
-                      </BadgeRoot>
+                      <span className="inline-flex items-center rounded-full border border-border-subtle bg-raised px-2 py-0.5 text-xs text-foreground-secondary">
+                        {p.category_id
+                          ? (categories.find((c) => c.id === p.category_id)?.name ?? p.category_name ?? "Sin categoría")
+                          : "Sin categoría"}
+                      </span>
                     </td>
                     <td className="px-4 py-3 align-middle font-medium text-foreground">
                       {money.format(
@@ -410,13 +499,9 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
                       {p.stock}
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <BadgeRoot
-                        className={`${foodCostBadgeClass(p.food_cost_percentage)}`}
-                      >
-                        <BadgeLabel className="text-xs font-medium">
-                          {pctLabel}
-                        </BadgeLabel>
-                      </BadgeRoot>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${foodCostBadgeClass(p.food_cost_percentage)}`}>
+                        {pctLabel}
+                      </span>
                     </td>
                     <td className="px-4 py-3 align-middle">
                       <SwitchRoot
@@ -473,6 +558,209 @@ export function ProductosClient({ tenantId, role }: ProductosClientProps) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* ── Import CSV modal ── */}
+      {showImportModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            background: "rgba(0,0,0,0.45)",
+            backdropFilter: "blur(4px)",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeImportModal(); }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 560,
+              borderRadius: 16,
+              border: "1px solid var(--border-default)",
+              background: "var(--background-surface)",
+              boxShadow: "0 24px 48px rgba(0,0,0,0.18)",
+              overflow: "hidden",
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                padding: "20px 24px 16px",
+                borderBottom: "1px solid var(--border-subtle)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: 16 }}>Importar productos desde CSV</span>
+              <button
+                onClick={closeImportModal}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--foreground-muted)",
+                  fontSize: 20,
+                  lineHeight: 1,
+                  padding: 4,
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "20px 24px" }}>
+              {importResult ? (
+                /* ── Resultado ── */
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 16 }}>
+                    <div style={{ padding: 12, borderRadius: 8, background: "var(--success-soft)", textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: "var(--success)" }}>{importResult.created}</div>
+                      <div style={{ fontSize: 12, color: "var(--success)" }}>Creados</div>
+                    </div>
+                    <div style={{ padding: 12, borderRadius: 8, background: "var(--accent-soft)", textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)" }}>{importResult.updated}</div>
+                      <div style={{ fontSize: 12, color: "var(--accent)" }}>Actualizados</div>
+                    </div>
+                    <div style={{
+                      padding: 12, borderRadius: 8, textAlign: "center",
+                      background: importResult.skipped > 0 ? "var(--warning-soft)" : "var(--background-raised)",
+                    }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: importResult.skipped > 0 ? "var(--warning)" : "var(--foreground-muted)" }}>
+                        {importResult.skipped}
+                      </div>
+                      <div style={{ fontSize: 12, color: importResult.skipped > 0 ? "var(--warning)" : "var(--foreground-muted)" }}>
+                        Con errores
+                      </div>
+                    </div>
+                  </div>
+
+                  {importResult.errors.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Filas con errores:</p>
+                      <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: 8 }}>
+                        <table style={{ width: "100%", fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: "var(--background-raised)", position: "sticky", top: 0 }}>
+                              <th style={{ padding: "6px 12px", textAlign: "left", fontWeight: 500 }}>Fila</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", fontWeight: 500 }}>Producto</th>
+                              <th style={{ padding: "6px 12px", textAlign: "left", fontWeight: 500 }}>Error</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {importResult.errors.map((err, idx) => (
+                              <tr key={idx} style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                                <td style={{ padding: "6px 12px", color: "var(--foreground-muted)" }}>#{err.row}</td>
+                                <td style={{ padding: "6px 12px" }}>{err.nombre || err.sku || "—"}</td>
+                                <td style={{ padding: "6px 12px", color: "var(--danger)" }}>{err.error}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+                    <Button variant="primary" className="bg-accent text-accent-text hover:bg-accent-hover" onPress={closeImportModal}>
+                      Cerrar
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                /* ── Selección de archivo ── */
+                <>
+                  {/* Dropzone */}
+                  <div
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const f = e.dataTransfer.files[0];
+                      if (f?.name.toLowerCase().endsWith(".csv")) setImportFile(f);
+                    }}
+                    onClick={() => document.getElementById("csv-input")?.click()}
+                    style={{
+                      border: "2px dashed var(--border-default)",
+                      borderRadius: 12,
+                      padding: 32,
+                      textAlign: "center",
+                      cursor: "pointer",
+                      background: importFile ? "var(--success-soft)" : "var(--background-raised)",
+                      transition: "all .15s",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <input
+                      id="csv-input"
+                      type="file"
+                      accept=".csv"
+                      style={{ display: "none" }}
+                      onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                    />
+                    {importFile ? (
+                      <>
+                        <FileCheck size={32} style={{ color: "var(--success)", margin: "0 auto 8px" }} />
+                        <p style={{ fontWeight: 500 }}>{importFile.name}</p>
+                        <p style={{ fontSize: 12, color: "var(--foreground-muted)" }}>
+                          {(importFile.size / 1024).toFixed(1)} KB
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <FileUp size={32} style={{ color: "var(--foreground-muted)", margin: "0 auto 8px" }} />
+                        <p style={{ fontWeight: 500 }}>Arrastrá o hacé clic para subir tu CSV</p>
+                        <p style={{ fontSize: 12, color: "var(--foreground-muted)", marginTop: 4 }}>
+                          Máximo 500 productos · 5 MB
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Info formato */}
+                  <div style={{
+                    padding: 12,
+                    background: "var(--background-raised)",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: "var(--foreground-muted)",
+                  }}>
+                    <p style={{ fontWeight: 500, marginBottom: 4 }}>Columnas requeridas:</p>
+                    <code style={{ fontFamily: "monospace" }}>
+                      nombre, descripcion, sku, categoria, precio, precio_descuento, stock, activo
+                    </code>
+                    <p style={{ marginTop: 8 }}>
+                      Si un SKU ya existe → actualiza el producto. Si no existe → lo crea.
+                      Las categorías nuevas se crean automáticamente.
+                    </p>
+                  </div>
+
+                  {/* Error general */}
+                  {importError && (
+                    <p style={{ marginTop: 12, fontSize: 13, color: "var(--danger)" }}>{importError}</p>
+                  )}
+
+                  {/* Footer */}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+                    <Button variant="ghost" onPress={closeImportModal}>Cancelar</Button>
+                    <Button
+                      variant="primary"
+                      className="bg-accent text-accent-text hover:bg-accent-hover"
+                      isDisabled={!importFile || importLoading}
+                      onPress={() => void handleImport()}
+                    >
+                      {importLoading ? "Importando..." : importFile ? "Importar" : "Importar CSV"}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

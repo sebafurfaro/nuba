@@ -25,7 +25,8 @@ import {
   Text,
   TextArea,
 } from "@heroui/react";
-import { ArrowLeft, Building2, EyeOff, ImagePlus, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Building2, EyeOff, ImagePlus, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { useImageConverter } from "@/hooks";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -125,10 +126,19 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
   const [initialImageUrl, setInitialImageUrl] = useState<string | null>(null);
   const [imageRemoved, setImageRemoved] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const {
+    convert: convertImage,
+    isConverting,
+    compressionRatio,
+  } = useImageConverter({ quality: 0.85, maxWidth: 1200, maxHeight: 1200 });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [categories, setCategories] = useState<CategorySelectOption[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [recipeId, setRecipeId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [pendingNavId, setPendingNavId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [skuLocked, setSkuLocked] = useState(false);
   const [activeTab, setActiveTab] = useState<"general" | "sucursales">("general");
@@ -203,6 +213,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
             portion_unit: p.portion_unit,
             branch_id: p.branch_id,
           };
+          setRecipeId(p.recipe_id);
           setCategories(Array.isArray(data.categories) ? data.categories : []);
           setInitialImageUrl(p.image_url);
           setImageRemoved(false);
@@ -327,12 +338,14 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
   const onSubmit: SubmitHandler<ProductoCreateFormValues> = useCallback(
     async (values) => {
       setSubmitError(null);
+      setShowErrorDialog(false);
       setSubmitting(true);
       try {
         let imageUrl: string | null = null;
         if (imageFile) {
+          const webpFile = await convertImage(imageFile);
           const fd = new FormData();
-          fd.set("file", imageFile);
+          fd.set("file", webpFile);
           const up = await fetch(`/api/${tenantId}/subidas`, {
             method: "POST",
             body: fd,
@@ -343,6 +356,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
             | null;
           if (!up.ok) {
             setSubmitError(upJson?.error ?? "No se pudo subir la imagen.");
+            setShowErrorDialog(true);
             return;
           }
           imageUrl = upJson?.url?.trim() ? upJson.url.trim() : null;
@@ -411,10 +425,12 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
             | null;
           if (res.status === 409) {
             setSubmitError(json?.error ?? "SKU duplicado.");
+            setShowErrorDialog(true);
             return;
           }
           if (!res.ok) {
             setSubmitError(json?.error ?? "No se pudo actualizar el producto.");
+            setShowErrorDialog(true);
             return;
           }
 
@@ -437,6 +453,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                 setSubmitError(
                   dj?.error ?? "No se pudo eliminar una variación.",
                 );
+                setShowErrorDialog(true);
                 return;
               }
             }
@@ -471,6 +488,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                 setSubmitError(
                   vj?.error ?? "No se pudo actualizar una variación.",
                 );
+                setShowErrorDialog(true);
                 return;
               }
               nextInitial.add(v.id);
@@ -489,10 +507,12 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                 | null;
               if (vr.status === 409) {
                 setSubmitError(vj?.error ?? "SKU de variación duplicado.");
+                setShowErrorDialog(true);
                 return;
               }
               if (!vr.ok || !vj?.id) {
                 setSubmitError(vj?.error ?? "No se pudo crear una variación.");
+                setShowErrorDialog(true);
                 return;
               }
               form.setValue(`variaciones.${i}.id`, vj.id, {
@@ -507,6 +527,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
           setImageRemoved(false);
           setImageFile(null);
           router.refresh();
+          setShowSuccessDialog(true);
           return;
         }
 
@@ -579,16 +600,19 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
 
         if (res.status === 409) {
           setSubmitError(json?.error ?? "SKU duplicado.");
+          setShowErrorDialog(true);
           return;
         }
         if (!res.ok || !json?.id) {
           setSubmitError(json?.error ?? "No se pudo crear el producto.");
+          setShowErrorDialog(true);
           return;
         }
-        router.push(`/${tenantId}/panel/productos/${json.id}`);
-        router.refresh();
+        setPendingNavId(json.id!);
+        setShowSuccessDialog(true);
       } catch {
         setSubmitError("Error de red. Intentá de nuevo.");
+        setShowErrorDialog(true);
       } finally {
         setSubmitting(false);
       }
@@ -966,18 +990,16 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
             </Card.Root>
 
             {productId ? (
-              <Card.Root className="border border-border-subtle" style={glassStyle}>
-                <Card.Header>
-                  <Card.Title>Ingredientes</Card.Title>
-                </Card.Header>
-                <Card.Content>
-                  <Text className="text-sm text-foreground-secondary">
-                    La composición por ingredientes solo se puede definir al crear el
-                    producto. Si necesitás cambiarla, contactá a soporte o recreá el
-                    producto.
-                  </Text>
-                </Card.Content>
-              </Card.Root>
+              <IngredientesEdit
+                tenantId={tenantId}
+                productId={productId}
+                initialRecipeId={recipeId}
+                onRecipeCreated={(id) => {
+                  setRecipeId(id);
+                  productCoreRef.current = { ...productCoreRef.current, recipe_id: id };
+                }}
+                glassStyle={glassStyle}
+              />
             ) : (
               <Card.Root className="border border-border-subtle" style={glassStyle}>
                 <Card.Header className="flex flex-row flex-wrap items-center justify-between gap-2">
@@ -1148,6 +1170,16 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                     JPG, PNG o WEBP. Máximo 2 MB.
                   </Text>
                 )}
+                {isConverting && (
+                  <Text className="text-xs" style={{ color: "var(--foreground-muted)", marginTop: 4 }}>
+                    Optimizando imagen...
+                  </Text>
+                )}
+                {!isConverting && compressionRatio !== null && compressionRatio > 0 && (
+                  <Text className="text-xs" style={{ color: "var(--success)", marginTop: 4 }}>
+                    Imagen optimizada — {compressionRatio}% más liviana
+                  </Text>
+                )}
               </Card.Content>
             </Card.Root>
 
@@ -1220,10 +1252,6 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
           </div>
         </div>
 
-        {submitError ? (
-          <Text className="text-danger">{submitError}</Text>
-        ) : null}
-
         <footer className="sticky bottom-0 z-20 -mx-4 mt-auto border-t border-border-subtle bg-background/95 px-4 py-4 backdrop-blur-md md:-mx-6 md:px-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1278,9 +1306,408 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
           basePrice={form.watch("precio") ?? 0}
         />
       ) : null}
+
+      <DialogSuccess
+        isOpen={showSuccessDialog}
+        onClose={() => {
+          setShowSuccessDialog(false);
+          if (pendingNavId) {
+            router.push(`/${tenantId}/panel/productos/${pendingNavId}`);
+            router.refresh();
+          }
+        }}
+        title={productId ? "Cambios guardados" : "Producto creado"}
+        description={
+          productId
+            ? "Los cambios se aplicaron correctamente."
+            : "El producto fue creado. Podés seguir editando sus detalles."
+        }
+      />
+
+      <DialogWarning
+        isOpen={showErrorDialog}
+        onClose={() => setShowErrorDialog(false)}
+        title="No se pudo guardar"
+        description={submitError ?? "Ocurrió un error inesperado."}
+        confirmLabel="Entendido"
+        cancelLabel="Cerrar"
+        onConfirm={() => setShowErrorDialog(false)}
+      />
     </div>
   );
 }
+
+// ─── Ingredientes Edit ────────────────────────────────────────────────────────
+
+type IngItemView = {
+  item_id: string;
+  ingredient_id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+};
+
+const UNIDADES_EDIT = ["ml", "l", "g", "kg", "u", "porciones"] as const;
+
+function IngredientesEdit({
+  tenantId,
+  productId,
+  initialRecipeId,
+  onRecipeCreated,
+  glassStyle,
+}: {
+  tenantId: string;
+  productId: string;
+  initialRecipeId: string | null;
+  onRecipeCreated: (id: string) => void;
+  glassStyle: { background: string; backdropFilter: string };
+}) {
+  const [items, setItems] = useState<IngItemView[]>([]);
+  const [recipeId, setRecipeId] = useState<string | null>(initialRecipeId);
+  const [loading, setLoading] = useState(false);
+  const [editQty, setEditQty] = useState<Record<string, string>>({});
+  const [editUnit, setEditUnit] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<IngItemView | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showError, setShowError] = useState(false);
+  // Add form
+  const [addNombre, setAddNombre] = useState("");
+  const [addCantidad, setAddCantidad] = useState("1");
+  const [addUnidad, setAddUnidad] = useState<string>("g");
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async (rid: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/recetas/${rid}`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        items: {
+          id: string;
+          ingredient_id: string | null;
+          quantity: number;
+          unit: string;
+          ingredient?: { name: string } | null;
+        }[];
+      };
+      const mapped: IngItemView[] = data.items
+        .filter((i) => i.ingredient_id)
+        .map((i) => ({
+          item_id: i.id,
+          ingredient_id: i.ingredient_id!,
+          name: i.ingredient?.name ?? "—",
+          quantity: i.quantity,
+          unit: i.unit,
+        }));
+      setItems(mapped);
+      setEditQty(Object.fromEntries(mapped.map((i) => [i.item_id, String(i.quantity)])));
+      setEditUnit(Object.fromEntries(mapped.map((i) => [i.item_id, i.unit])));
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (initialRecipeId) {
+      setRecipeId(initialRecipeId);
+      void load(initialRecipeId);
+    }
+  }, [initialRecipeId, load]);
+
+  async function handleSave(item: IngItemView) {
+    const qty = parseFloat(editQty[item.item_id] ?? "");
+    const unit = editUnit[item.item_id] ?? item.unit;
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setErrorMsg("La cantidad debe ser un número positivo.");
+      setShowError(true);
+      return;
+    }
+    setSaving(item.item_id);
+    try {
+      const res = await fetch(
+        `/api/${tenantId}/recetas/${recipeId}/lineas/${item.item_id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ quantity: qty, unit }),
+        },
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        setErrorMsg(j?.error ?? "No se pudo guardar.");
+        setShowError(true);
+        return;
+      }
+      setItems((prev) =>
+        prev.map((i) => (i.item_id === item.item_id ? { ...i, quantity: qty, unit } : i)),
+      );
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  async function handleDelete(item: IngItemView) {
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/${tenantId}/recetas/${recipeId}/lineas/${item.item_id}`,
+        { method: "DELETE", credentials: "include" },
+      );
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        setErrorMsg(j?.error ?? "No se pudo eliminar.");
+        setShowError(true);
+        return;
+      }
+      setItems((prev) => prev.filter((i) => i.item_id !== item.item_id));
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }
+
+  async function handleAdd() {
+    const nombre = addNombre.trim();
+    const qty = parseFloat(addCantidad);
+    if (!nombre) {
+      setErrorMsg("El nombre del ingrediente no puede estar vacío.");
+      setShowError(true);
+      return;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setErrorMsg("La cantidad debe ser un número positivo.");
+      setShowError(true);
+      return;
+    }
+    setAdding(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/productos/${productId}/ingredientes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ nombre, cantidad: qty, unidad: addUnidad }),
+      });
+      const j = (await res.json().catch(() => null)) as {
+        item?: { id: string; quantity: number; unit: string; ingredient?: { name: string } };
+        recipe_id?: string;
+        error?: string;
+      } | null;
+      if (!res.ok) {
+        setErrorMsg(j?.error ?? "No se pudo agregar el ingrediente.");
+        setShowError(true);
+        return;
+      }
+      // If a new recipe was created, notify parent
+      if (j?.recipe_id && j.recipe_id !== recipeId) {
+        setRecipeId(j.recipe_id);
+        onRecipeCreated(j.recipe_id);
+      }
+      if (j?.item) {
+        const newItem: IngItemView = {
+          item_id: j.item.id,
+          ingredient_id: j.item.id,
+          name: nombre,
+          quantity: j.item.quantity,
+          unit: j.item.unit,
+        };
+        setItems((prev) => [...prev, newItem]);
+        setEditQty((prev) => ({ ...prev, [newItem.item_id]: String(newItem.quantity) }));
+        setEditUnit((prev) => ({ ...prev, [newItem.item_id]: newItem.unit }));
+      }
+      setAddNombre("");
+      setAddCantidad("1");
+      setAddUnidad("g");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <>
+      <DialogWarning
+        isOpen={showError}
+        onClose={() => setShowError(false)}
+        title="Error"
+        description={errorMsg ?? "Ocurrió un error inesperado."}
+        confirmLabel="Entendido"
+        cancelLabel="Cerrar"
+        onConfirm={() => setShowError(false)}
+      />
+      <DialogWarning
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Eliminar ingrediente"
+        description={`¿Eliminar "${deleteTarget?.name}" de la receta? Esta acción no se puede deshacer.`}
+        confirmLabel="Sí, eliminar"
+        cancelLabel="Cancelar"
+        onConfirm={() => deleteTarget && void handleDelete(deleteTarget)}
+      />
+
+      <Card.Root className="border border-border-subtle" style={glassStyle}>
+        <Card.Header className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <Card.Title>Ingredientes</Card.Title>
+        </Card.Header>
+        <Card.Content className="flex flex-col gap-4">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-foreground-muted">
+              <Loader2 className="size-4 animate-spin" />
+              Cargando ingredientes...
+            </div>
+          ) : items.length === 0 ? (
+            <Text className="text-sm text-foreground-muted">
+              Sin ingredientes. Usá el formulario de abajo para agregar.
+            </Text>
+          ) : (
+            <table className="w-full min-w-[480px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border-subtle text-foreground-secondary">
+                  <th className="px-2 py-2 text-start font-medium">Ingrediente</th>
+                  <th className="px-2 py-2 text-start font-medium">Cantidad</th>
+                  <th className="px-2 py-2 text-start font-medium">Unidad</th>
+                  <th className="w-20 px-2 py-2 text-end font-medium">
+                    <span className="sr-only">Acciones</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {items.map((item) => {
+                  const isSaving = saving === item.item_id;
+                  return (
+                    <tr key={item.item_id}>
+                      <td className="px-2 py-2 align-middle font-medium text-foreground">
+                        {item.name}
+                      </td>
+                      <td className="px-2 py-2 align-middle">
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="any"
+                          min="0"
+                          className="w-24 rounded-lg border border-border-subtle bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:border-accent"
+                          value={editQty[item.item_id] ?? ""}
+                          onChange={(e) =>
+                            setEditQty((p) => ({ ...p, [item.item_id]: e.target.value }))
+                          }
+                          disabled={isSaving}
+                        />
+                      </td>
+                      <td className="px-2 py-2 align-middle">
+                        <select
+                          className="rounded-lg border border-border-subtle bg-background px-2 py-1.5 text-sm text-foreground outline-none focus:border-accent"
+                          value={editUnit[item.item_id] ?? item.unit}
+                          onChange={(e) =>
+                            setEditUnit((p) => ({ ...p, [item.item_id]: e.target.value }))
+                          }
+                          disabled={isSaving}
+                        >
+                          {UNIDADES_EDIT.map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-2 py-2 align-middle">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            isIconOnly
+                            aria-label="Guardar cambios"
+                            isDisabled={isSaving || deleting}
+                            onPress={() => void handleSave(item)}
+                          >
+                            {isSaving ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Save className="size-4 text-accent" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            isIconOnly
+                            aria-label="Eliminar ingrediente"
+                            isDisabled={isSaving || deleting}
+                            onPress={() => setDeleteTarget(item)}
+                          >
+                            <Trash2 className="size-4 text-danger" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+
+          {/* Add ingredient form */}
+          <div
+            className="flex flex-wrap items-end gap-3 rounded-xl border border-border-subtle bg-raised/40 p-3"
+          >
+            <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+              <label className="text-xs font-medium text-foreground-secondary">Nombre</label>
+              <input
+                type="text"
+                className="h-9 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
+                placeholder="Ej. Harina 000"
+                value={addNombre}
+                onChange={(e) => setAddNombre(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="flex w-24 flex-col gap-1">
+              <label className="text-xs font-medium text-foreground-secondary">Cantidad</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min="0"
+                className="h-9 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
+                value={addCantidad}
+                onChange={(e) => setAddCantidad(e.target.value)}
+                disabled={adding}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-foreground-secondary">Unidad</label>
+              <select
+                className="h-9 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
+                value={addUnidad}
+                onChange={(e) => setAddUnidad(e.target.value)}
+                disabled={adding}
+              >
+                {UNIDADES_EDIT.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              isDisabled={adding}
+              onPress={() => void handleAdd()}
+            >
+              {adding ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4 shrink-0" />
+              )}
+              Agregar
+            </Button>
+          </div>
+        </Card.Content>
+      </Card.Root>
+    </>
+  );
+}
+
+// ─── Eliminar producto ────────────────────────────────────────────────────────
 
 function EliminarProductoEditDialog({
   name,
