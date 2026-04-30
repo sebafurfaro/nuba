@@ -21,8 +21,10 @@ const createVariantSchema = z.object({
   stock: z.number().int().min(0),
 });
 
+const uuidSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
 const inlineRecipeIngredientSchema = z.object({
-  name: z.string().min(1).max(255),
+  ingredient_id: uuidSchema,
   quantity: z.number().positive(),
   unit: unitEnum,
 });
@@ -135,7 +137,7 @@ export async function POST(request: Request, ctx: Ctx) {
       is_active: b.is_active,
       recipe_id: b.recipe_id ?? null,
       inline_recipe_ingredients: b.inline_recipe_ingredients?.map((row) => ({
-        name: row.name,
+        ingredient_id: row.ingredient_id,
         quantity: row.quantity,
         unit: row.unit as UnitType,
       })),

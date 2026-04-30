@@ -7,6 +7,9 @@ import { useEffect, useRef, useState } from "react";
 type Province = { id: string; nombre: string };
 type Municipality = { id: string; nombre: string };
 
+// CABA no tiene municipios en georef — usa asentamientos (barrios)
+const CABA_ID = "02";
+
 let provincesCache: Province[] | null = null;
 const municipiosCache: Record<string, Municipality[]> = {};
 
@@ -21,7 +24,17 @@ async function fetchProvinces(): Promise<Province[]> {
   return provincesCache;
 }
 
+async function fetchBarriosCaba(): Promise<Municipality[]> {
+  if (municipiosCache[CABA_ID]) return municipiosCache[CABA_ID]!;
+  const res = await fetch("/api/barrios");
+  if (!res.ok) throw new Error("barrios fetch failed");
+  const data = (await res.json()) as { id: string; nombre: string }[];
+  municipiosCache[CABA_ID] = data;
+  return municipiosCache[CABA_ID]!;
+}
+
 async function fetchMunicipios(provinceId: string): Promise<Municipality[]> {
+  if (provinceId === CABA_ID) return fetchBarriosCaba();
   if (municipiosCache[provinceId]) return municipiosCache[provinceId]!;
   const res = await fetch(
     `https://apis.datos.gob.ar/georef/api/v2.0/municipios?provincia=${provinceId}&campos=id,nombre&max=200&orden=nombre`,
@@ -252,10 +265,10 @@ export function GeoSelector({
         </select>
       </div>
 
-      {/* City select */}
+      {/* City / Barrio select */}
       <div className="flex flex-col gap-1">
         <label className="text-sm text-foreground-secondary">
-          Ciudad{" "}
+          {currentProvinceSelectId === CABA_ID ? "Barrio" : "Ciudad"}{" "}
           {!required && (
             <span className="text-xs font-normal">(opcional)</span>
           )}
@@ -268,10 +281,14 @@ export function GeoSelector({
         >
           <option value="">
             {loadingMunis
-              ? "Cargando ciudades..."
+              ? currentProvinceSelectId === CABA_ID
+                ? "Cargando barrios..."
+                : "Cargando ciudades..."
               : !currentProvinceSelectId
                 ? "Seleccionar provincia primero"
-                : "Seleccionar ciudad"}
+                : currentProvinceSelectId === CABA_ID
+                  ? "Seleccionar barrio"
+                  : "Seleccionar ciudad"}
           </option>
           {!loadingMunis &&
             municipalities.length === 0 &&

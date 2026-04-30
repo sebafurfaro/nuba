@@ -53,7 +53,7 @@ export const variacionFormSchema = z.object({
 });
 
 export const ingredienteInlineFormSchema = z.object({
-  nombre: z.string().max(255).optional().default(""),
+  ingredient_id: z.string().optional().default(""),
   cantidad: z.preprocess(
     (v) => (v === "" || v == null ? undefined : toOptionalNumber(v)),
     z.number().positive().optional(),
@@ -123,23 +123,16 @@ function refineProductoPrecioYStock(
 }
 
 function refineIngredientesInline(
-  data: { ingredientes_inline?: { nombre?: string; cantidad?: number }[] },
+  data: { ingredientes_inline?: { ingredient_id?: string; cantidad?: number }[] },
   ctx: z.RefinementCtx,
 ) {
   const rows = data.ingredientes_inline ?? [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
-    const name = String(r.nombre ?? "").trim();
+    const hasId = Boolean(r.ingredient_id?.trim());
     const cant = r.cantidad;
     const hasCantidad = cant != null && Number.isFinite(cant) && cant > 0;
-    if (!name && hasCantidad) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["ingredientes_inline", i, "nombre"],
-        message: "Nombre del ingrediente",
-      });
-    }
-    if (name && !hasCantidad) {
+    if (hasId && !hasCantidad) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["ingredientes_inline", i, "cantidad"],

@@ -26,16 +26,29 @@ import {
   GitBranch,
   ImagePlus,
   MapPin,
+  Palette,
+  Plus,
   Settings,
   Store,
   X,
 } from "lucide-react";
 
 import { OrderStatusesSettingsClient } from "./order-statuses/order-statuses-settings-client";
+import { PanelColoresMarca } from "@/components/admin/PanelColoresMarca";
 import { DialogSuccess } from "@/components/ui/DialogSuccess";
 import { DialogWarning } from "@/components/ui/DialogWarning";
 import { GeoSelector } from "@/components/ui/GeoSelector";
-import type { FeatureFlagKey, Tenant } from "@/types/tenant";
+import {
+  DAY_NAMES,
+} from "@/types/tenant";
+import type {
+  BusinessHour,
+  BusinessHoursWeek,
+  BusinessHourSlot,
+  DayOfWeek,
+  FeatureFlagKey,
+  Tenant,
+} from "@/types/tenant";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -152,6 +165,10 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
   const [flagWarnOpen, setFlagWarnOpen] = useState(false);
   const [flagWarnMsg, setFlagWarnMsg] = useState("");
 
+  // Business hours
+  const [businessHours, setBusinessHours] = useState<BusinessHoursWeek | null>(null);
+  const [savingDay, setSavingDay] = useState<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
 
@@ -184,10 +201,11 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
     setLoading(true);
     setLoadError(false);
     try {
-      const [profileRes, flagsRes, branchesRes] = await Promise.all([
+      const [profileRes, flagsRes, branchesRes, horariosRes] = await Promise.all([
         fetch(`/api/${tenantId}/perfil`, { cache: "no-store", credentials: "include" }),
         fetch(`/api/${tenantId}/banderas`, { cache: "no-store", credentials: "include" }),
         fetch(`/api/${tenantId}/sucursales`, { cache: "no-store", credentials: "include" }),
+        fetch(`/api/${tenantId}/horarios`, { cache: "no-store", credentials: "include" }),
       ]);
 
       if (!profileRes.ok || !flagsRes.ok) {
@@ -200,6 +218,9 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       const branchesData = branchesRes.ok
         ? ((await branchesRes.json()) as BranchSummary[])
         : [];
+      if (horariosRes.ok) {
+        setBusinessHours((await horariosRes.json()) as BusinessHoursWeek);
+      }
 
       setTenant(profileData);
       setFlags(flagsData.flags as Partial<Record<FeatureFlagKey, boolean>>);
@@ -209,9 +230,9 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
         description: profileData.description ?? "",
         email: profileData.email ?? "",
         phone: profileData.phone ?? "",
-        address: profileData.address ?? "",
-        city: profileData.city ?? "",
-        province: profileData.province ?? "",
+        address: (profileData.address as string | null | undefined) ?? "",
+        city: (profileData.city as string | null | undefined) ?? "",
+        province: (profileData.province as string | null | undefined) ?? "",
         logo_url: profileData.logo_url ?? "",
         banner_url: profileData.banner_url ?? "",
         website: profileData.website ?? "",
@@ -270,9 +291,9 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
       description: updated.description ?? "",
       email: updated.email ?? "",
       phone: updated.phone ?? "",
-      address: updated.address ?? "",
-      city: updated.city ?? "",
-      province: updated.province ?? "",
+      address: (updated.address as string | null | undefined) ?? "",
+      city: (updated.city as string | null | undefined) ?? "",
+      province: (updated.province as string | null | undefined) ?? "",
       logo_url: updated.logo_url ?? "",
       banner_url: updated.banner_url ?? "",
       website: updated.website ?? "",
@@ -400,6 +421,123 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
     }
   }
 
+  // ─── Business hours handlers ───────────────────────────────────────────────
+
+  const DAY_ORDER: DayOfWeek[] = [1, 2, 3, 4, 5, 6, 0];
+
+  function addHoursToTime(time: string, hours: number): string {
+    const [h, m] = time.split(":").map(Number);
+    const newH = Math.min((h! + hours), 23);
+    return `${String(newH).padStart(2, "0")}:${String(m!).padStart(2, "0")}`;
+  }
+
+  async function handleDayToggle(day: DayOfWeek, isOpen: boolean) {
+    setSavingDay(day);
+    try {
+      const currentSlots = businessHours?.[day]?.slots ?? [];
+      const defaultSlots =
+        currentSlots.length > 0
+          ? currentSlots.map((s) => ({ open_time: s.open_time, close_time: s.close_time }))
+          : [{ open_time: "09:00", close_time: "18:00" }];
+
+      const res = await fetch(`/api/${tenantId}/horarios`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ day_of_week: day, is_open: isOpen, slots: isOpen ? defaultSlots : [] }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = (await res.json()) as BusinessHour;
+      setBusinessHours((prev) => (prev ? { ...prev, [day]: updated } : prev));
+    } catch {
+      setWarnMsg("No se pudo actualizar el horario");
+      setWarnOpen(true);
+    } finally {
+      setSavingDay(null);
+    }
+  }
+
+  function handleSlotChange(
+    day: DayOfWeek,
+    slotIdx: number,
+    field: "open_time" | "close_time",
+    value: string,
+  ) {
+    setBusinessHours((prev) => {
+      if (!prev) return prev;
+      const dayData = prev[day]!;
+      const newSlots = dayData.slots.map((s, i) =>
+        i === slotIdx ? { ...s, [field]: value } : s,
+      );
+      return { ...prev, [day]: { ...dayData, slots: newSlots } };
+    });
+  }
+
+  function handleAddSlot(day: DayOfWeek) {
+    setBusinessHours((prev) => {
+      if (!prev) return prev;
+      const dayData = prev[day]!;
+      const lastSlot = dayData.slots[dayData.slots.length - 1];
+      const newSlot: BusinessHourSlot = {
+        id: "",
+        business_hour_id: dayData.id,
+        open_time: lastSlot ? lastSlot.close_time : "09:00",
+        close_time: lastSlot ? addHoursToTime(lastSlot.close_time, 2) : "18:00",
+        sort_order: dayData.slots.length,
+      };
+      return { ...prev, [day]: { ...dayData, slots: [...dayData.slots, newSlot] } };
+    });
+  }
+
+  function handleRemoveSlot(day: DayOfWeek, slotIdx: number) {
+    setBusinessHours((prev) => {
+      if (!prev) return prev;
+      const dayData = prev[day]!;
+      return {
+        ...prev,
+        [day]: { ...dayData, slots: dayData.slots.filter((_, i) => i !== slotIdx) },
+      };
+    });
+  }
+
+  async function handleSaveDay(day: DayOfWeek) {
+    setSavingDay(day);
+    try {
+      const dayData = businessHours?.[day];
+      if (!dayData) return;
+
+      const res = await fetch(`/api/${tenantId}/horarios`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          day_of_week: day,
+          is_open: dayData.is_open,
+          slots: dayData.slots.map((s) => ({
+            open_time: s.open_time,
+            close_time: s.close_time,
+          })),
+        }),
+      });
+
+      const data = (await res.json()) as BusinessHour & { error?: string };
+
+      if (!res.ok) {
+        setWarnMsg(data.error ?? "No se pudo guardar el horario");
+        setWarnOpen(true);
+        return;
+      }
+
+      setBusinessHours((prev) => (prev ? { ...prev, [day]: data } : prev));
+      setSuccessOpen(true);
+    } catch {
+      setWarnMsg("No se pudo guardar el horario");
+      setWarnOpen(true);
+    } finally {
+      setSavingDay(null);
+    }
+  }
+
   // ─── Loading / error ───────────────────────────────────────────────────────
 
   if (loading) return <AdminSkeleton />;
@@ -418,6 +556,29 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
+
+  const tabs = [
+    {
+      id: "perfil",
+      label: "Perfil",
+      icon: <Store className="size-4" />,
+    },
+    {
+      id: "config",
+      label: "Configuración",
+      icon: <Settings className="size-4" />,
+    },
+    {
+      id: "pipeline",
+      label: "Pipeline",
+      icon: <GitBranch className="size-4" />,
+    },
+    {
+      id: "marca",
+      label: "Marca",
+      icon: <Palette className="size-4" />,
+    },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
@@ -468,30 +629,17 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
             className="flex gap-1 border-b pb-px"
             style={{ borderColor: "var(--nuba-border-subtle)" }}
           >
-            <Tab
-              id="perfil"
-              className="flex cursor-pointer items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium transition-colors outline-none selected:text-accent"
-              style={{ color: "var(--nuba-fg-secondary)" }}
-            >
-              <Store className="size-4" />
-              Perfil
-            </Tab>
-            <Tab
-              id="config"
-              className="flex cursor-pointer items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium transition-colors outline-none selected:text-accent"
-              style={{ color: "var(--nuba-fg-secondary)" }}
-            >
-              <Settings className="size-4" />
-              Configuración
-            </Tab>
-            <Tab
-              id="pipeline"
-              className="flex cursor-pointer items-center gap-1.5 rounded-t px-3 py-2 text-sm font-medium transition-colors outline-none selected:text-accent"
-              style={{ color: "var(--nuba-fg-secondary)" }}
-            >
-              <GitBranch className="size-4" />
-              Pipeline
-            </Tab>
+            {tabs.map((tab) => (
+              <Tab
+                key={tab.id}
+                id={tab.id}
+                className="flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-colors outline-none selected:text-accent data-[selected=true]:bg-white"
+                style={{ color: "var(--nuba-fg-secondary)" }}
+              >
+                {tab.icon}
+                {tab.label}
+              </Tab>
+            ))}
           </TabList>
         </TabListContainer>
 
@@ -686,6 +834,171 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
                     </Card.Content>
                   </Card.Root>
                 )}
+
+                {/* Horarios de atención */}
+                <Card.Root
+                  className="border border-border-subtle"
+                  style={glassStyle}
+                >
+                  <Card.Header>
+                    <Card.Title>Horarios de atención</Card.Title>
+                  </Card.Header>
+                  <Card.Content className="p-0">
+                    {businessHours === null ? (
+                      <div className="flex items-center justify-center py-6">
+                        <div
+                          className="size-5 animate-spin rounded-full border-2 border-t-transparent"
+                          style={{ borderColor: "var(--nuba-border-default)", borderTopColor: "var(--nuba-accent)" }}
+                        />
+                      </div>
+                    ) : (
+                      DAY_ORDER.map((day, idx) => {
+                        const dayData = businessHours[day];
+                        const isOpen = dayData?.is_open ?? false;
+                        const slots = dayData?.slots ?? [];
+                        const isLast = idx === DAY_ORDER.length - 1;
+                        return (
+                          <div
+                            key={day}
+                            style={{
+                              padding: "12px 16px",
+                              borderBottom: isLast ? "none" : "1px solid var(--border-subtle)",
+                              opacity: savingDay === day ? 0.6 : 1,
+                              transition: "opacity .15s",
+                            }}
+                          >
+                            {/* Toggle + day name */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 12,
+                                marginBottom: isOpen ? 10 : 0,
+                              }}
+                            >
+                              <SwitchRoot
+                                isSelected={isOpen}
+                                onChange={(val) => void handleDayToggle(day, val)}
+                                isDisabled={savingDay === day}
+                              >
+                                <SwitchControl>
+                                  <SwitchThumb />
+                                </SwitchControl>
+                              </SwitchRoot>
+                              <span
+                                style={{ fontWeight: 500, fontSize: 13, minWidth: 90, color: "var(--foreground)" }}
+                              >
+                                {DAY_NAMES[day]}
+                              </span>
+                              {!isOpen && (
+                                <span style={{ fontSize: 12, color: "var(--foreground-muted)" }}>
+                                  Cerrado
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Slots */}
+                            {isOpen && (
+                              <div style={{ marginLeft: 52 }}>
+                                {slots.map((slot, idx2) => (
+                                  <div
+                                    key={idx2}
+                                    style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}
+                                  >
+                                    <input
+                                      type="time"
+                                      value={slot.open_time}
+                                      onChange={(e) => handleSlotChange(day, idx2, "open_time", e.target.value)}
+                                      style={{
+                                        padding: "4px 8px",
+                                        borderRadius: 6,
+                                        border: "1px solid var(--border-default)",
+                                        background: "var(--background-raised)",
+                                        color: "var(--foreground)",
+                                        fontSize: 13,
+                                      }}
+                                    />
+                                    <span style={{ color: "var(--foreground-muted)", fontSize: 13 }}>a</span>
+                                    <input
+                                      type="time"
+                                      value={slot.close_time}
+                                      onChange={(e) => handleSlotChange(day, idx2, "close_time", e.target.value)}
+                                      style={{
+                                        padding: "4px 8px",
+                                        borderRadius: 6,
+                                        border: "1px solid var(--border-default)",
+                                        background: "var(--background-raised)",
+                                        color: "var(--foreground)",
+                                        fontSize: 13,
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveSlot(day, idx2)}
+                                      style={{
+                                        background: "none",
+                                        border: "none",
+                                        color: "var(--foreground-muted)",
+                                        cursor: "pointer",
+                                        padding: 4,
+                                        display: "flex",
+                                        alignItems: "center",
+                                      }}
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+
+                                {slots.length < 5 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddSlot(day)}
+                                    style={{
+                                      background: "none",
+                                      border: "none",
+                                      color: "var(--accent)",
+                                      cursor: "pointer",
+                                      fontSize: 12,
+                                      fontWeight: 500,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 4,
+                                      padding: "4px 0",
+                                    }}
+                                  >
+                                    <Plus size={12} />
+                                    Agregar franja
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSaveDay(day)}
+                                  disabled={savingDay === day}
+                                  style={{
+                                    marginTop: 8,
+                                    padding: "5px 12px",
+                                    borderRadius: 6,
+                                    border: "none",
+                                    background: "var(--accent)",
+                                    color: "var(--accent-text)",
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    cursor: savingDay === day ? "not-allowed" : "pointer",
+                                    opacity: savingDay === day ? 0.6 : 1,
+                                  }}
+                                >
+                                  {savingDay === day ? "Guardando..." : "Guardar"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </Card.Content>
+                </Card.Root>
 
                 {/* Redes sociales */}
                 <Card.Root
@@ -1097,6 +1410,11 @@ export function AdministracionClient({ tenantId }: { tenantId: string }) {
         {/* ── Tab: Pipeline ────────────────────────────────────────────────── */}
         <TabPanel id="pipeline" className="pt-6 outline-none">
           <OrderStatusesSettingsClient tenantId={tenantId} />
+        </TabPanel>
+
+        {/* ── Tab: Marca ───────────────────────────────────────────────────── */}
+        <TabPanel id="marca" className="pt-6 outline-none">
+          <PanelColoresMarca tenantId={tenantId} />
         </TabPanel>
       </TabsRoot>
     </div>

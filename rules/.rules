@@ -1,8 +1,8 @@
-# Nuba — Cursor Rules
+# Nuba — Codex Rules
 # Plataforma SaaS multi-tenant para gestión gastronómica
 # Stack: Next.js 15 · TypeScript · Tailwind · HeroUI · mysql2 · NextAuth v5
 
----
+--
 
 ## CONTEXTO GENERAL
 
@@ -16,7 +16,7 @@ Antes de escribir cualquier código, tené en cuenta:
 - Los roles son: `admin`, `supervisor`, `vendedor`, `cliente`.
 - Los feature flags del tenant controlan qué secciones están habilitadas.
 
----
+--
 
 ## STACK TÉCNICO OBLIGATORIO
 
@@ -430,3 +430,6 @@ Antes de escribir código, verificá mentalmente:
 - [ ] ¿La ruta respeta el mapa de rutas del panel?
 - [ ] ¿El archivo está en la carpeta correcta según la estructura?
 
+## SIEMPRE QUE HAYA MODIFICACION EN BASE DE DATOS
+- Corre migracion
+- indica el script para correr migracion en DBeaver

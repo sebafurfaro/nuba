@@ -20,6 +20,7 @@ const updateStatusBodySchema = z
     color: z.string().min(4).max(7).optional(),
     sort_order: z.number().int().optional(),
     triggers_stock: z.boolean().optional(),
+    is_terminal: z.boolean().optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Vacío" });
 
@@ -47,6 +48,9 @@ export async function PUT(request: Request, ctx: Ctx) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error al actualizar";
+    if (msg.includes("sistema")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     const status = msg.includes("no encontrado") ? 404 : 400;
     return NextResponse.json({ error: msg }, { status });
   }
@@ -64,6 +68,12 @@ export async function DELETE(_request: Request, ctx: Ctx) {
   }
   try {
     const result = await deleteOrderStatusRow(gate.tenantUuid, id);
+    if (result === "protected") {
+      return NextResponse.json(
+        { error: "Este estado es del sistema y no puede eliminarse." },
+        { status: 403 },
+      );
+    }
     if (result === "in_use") {
       return NextResponse.json(
         { error: "Hay órdenes con este estado; no se puede eliminar." },
@@ -75,6 +85,10 @@ export async function DELETE(_request: Request, ctx: Ctx) {
     }
     return new NextResponse(null, { status: 204 });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "Error al eliminar";
+    if (msg.includes("sistema")) {
+      return NextResponse.json({ error: msg }, { status: 403 });
+    }
     console.error("[DELETE order-statuses]", e);
     return NextResponse.json({ error: "Error al eliminar" }, { status: 500 });
   }

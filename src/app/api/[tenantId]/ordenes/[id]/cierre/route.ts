@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getTenantSession, requireOrderStaff } from "@/lib/api-tenant-session";
-import { closeOrder } from "@/lib/db/orders";
+import { closeOrder, snapshotOrderCosts } from "@/lib/db/orders";
 import type { CloseOrderPaymentInput } from "@/types/order";
 
 type Ctx = { params: Promise<{ tenantId: string; id: string }> };

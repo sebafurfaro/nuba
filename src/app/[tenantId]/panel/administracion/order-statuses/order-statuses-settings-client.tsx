@@ -29,7 +29,7 @@ import {
   useOverlayState,
 } from "@heroui/react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ChevronRight, GripVertical, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, GripVertical, Lock, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -55,6 +55,8 @@ type AddStatusForm = z.infer<typeof addStatusSchema>;
 
 /** Coincide con `--nuba-badge-neutral-bg` en `globals.css` (el picker `<input type="color">` exige `#hex`). */
 const DEFAULT_STATUS_HEX = "#6b7280" as const;
+
+const PROTECTED_KEYS = ["pedido", "pagado"] as const;
 
 function slugKeyFromLabel(label: string): string {
   const base = label
@@ -87,6 +89,8 @@ function SortableStatusRow({
     setLabelDraft(row.label);
   }, [row.label, row.id]);
 
+  const protected_ = (PROTECTED_KEYS as readonly string[]).includes(row.key);
+
   const {
     attributes,
     listeners,
@@ -94,7 +98,7 @@ function SortableStatusRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: row.id });
+  } = useSortable({ id: row.id, disabled: protected_ });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -108,15 +112,26 @@ function SortableStatusRow({
       style={style}
       className="flex flex-col gap-3 border-b border-border-subtle py-4 last:border-b-0 sm:flex-row sm:items-center"
     >
-      <button
-        type="button"
-        className="cursor-grab touch-none self-start rounded p-2 text-foreground-muted hover:bg-raised active:cursor-grabbing"
-        aria-label="Arrastrar"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="size-5" />
-      </button>
+      {/* Handle o ícono de bloqueo */}
+      {protected_ ? (
+        <div
+          className="self-start rounded p-2 text-foreground-muted"
+          title="Estado del sistema — no se puede eliminar ni reordenar"
+        >
+          <Lock className="size-5" />
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="cursor-grab touch-none self-start rounded p-2 text-foreground-muted hover:bg-raised active:cursor-grabbing"
+          aria-label="Arrastrar"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-5" />
+        </button>
+      )}
+
       <div className="flex flex-wrap items-center gap-3 sm:flex-1">
         <label className="flex shrink-0 cursor-pointer flex-col gap-1">
           <span className="text-xs text-foreground-muted">Color</span>
@@ -129,55 +144,82 @@ function SortableStatusRow({
           />
         </label>
         <div className="min-w-0 flex-1 sm:max-w-xs">
-          <Label htmlFor={`label-${row.id}`} className="text-xs text-foreground-muted">
-            Etiqueta
-          </Label>
-          <Input
-            id={`label-${row.id}`}
-            variant="secondary"
-            value={labelDraft}
-            onChange={(e) => setLabelDraft(e.currentTarget.value)}
-            onBlur={() => {
-              const t = labelDraft.trim();
-              if (t && t !== row.label) {
-                onLabelCommit(row.id, t);
-              }
+          <span className="text-xs text-foreground-muted">Etiqueta</span>
+          {protected_ ? (
+            <p className="mt-1 flex h-10 items-center rounded-lg border border-border-subtle bg-raised/50 px-3 text-sm text-foreground">
+              {row.label}
+            </p>
+          ) : (
+            <Input
+              id={`label-${row.id}`}
+              variant="secondary"
+              value={labelDraft}
+              onChange={(e) => setLabelDraft(e.currentTarget.value)}
+              onBlur={() => {
+                const t = labelDraft.trim();
+                if (t && t !== row.label) {
+                  onLabelCommit(row.id, t);
+                }
+              }}
+            />
+          )}
+        </div>
+
+        {/* Descuenta stock — solo para no protegidos */}
+        {!protected_ ? (
+          <div className="flex flex-col gap-1">
+            <Text className="text-xs text-foreground-muted">Descuenta stock</Text>
+            <SwitchRoot
+              isSelected={row.triggers_stock}
+              onChange={(v) => onToggleStock(row.id, v)}
+            >
+              <SwitchControl>
+                <SwitchThumb />
+              </SwitchControl>
+            </SwitchRoot>
+          </div>
+        ) : null}
+
+        {/* Terminal — solo para no protegidos */}
+        {!protected_ ? (
+          <div className="flex flex-col gap-1">
+            <Text className="text-xs text-foreground-muted">Terminal</Text>
+            <SwitchRoot
+              isSelected={row.is_terminal}
+              onChange={(v) => onToggleTerminal(row.id, v)}
+            >
+              <SwitchControl>
+                <SwitchThumb />
+              </SwitchControl>
+            </SwitchRoot>
+          </div>
+        ) : null}
+
+        {/* Badge "Sistema" para protegidos, botón eliminar para el resto */}
+        {protected_ ? (
+          <span
+            className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide"
+            style={{
+              background: "var(--accent-soft)",
+              color: "var(--accent)",
             }}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Text className="text-xs text-foreground-muted">Descuenta stock</Text>
-          <SwitchRoot
-            isSelected={row.triggers_stock}
-            onChange={(v) => onToggleStock(row.id, v)}
           >
-            <SwitchControl>
-              <SwitchThumb />
-            </SwitchControl>
-          </SwitchRoot>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Text className="text-xs text-foreground-muted">Terminal</Text>
-          <SwitchRoot
-            isSelected={row.is_terminal}
-            onChange={(v) => onToggleTerminal(row.id, v)}
+            Sistema
+          </span>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            isIconOnly
+            className="text-danger"
+            aria-label="Eliminar estado"
+            onPress={() => onDelete(row.id)}
           >
-            <SwitchControl>
-              <SwitchThumb />
-            </SwitchControl>
-          </SwitchRoot>
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          isIconOnly
-          className="text-danger"
-          aria-label="Eliminar estado"
-          onPress={() => onDelete(row.id)}
-        >
-          <Trash2 className="size-4" />
-        </Button>
+            <Trash2 className="size-4" />
+          </Button>
+        )}
       </div>
+
       <Text className="w-full shrink-0 font-mono text-xs text-foreground-muted sm:w-28 sm:text-end">
         {row.key}
       </Text>

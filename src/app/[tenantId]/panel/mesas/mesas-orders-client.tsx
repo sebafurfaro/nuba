@@ -9,6 +9,7 @@ import { canAccessPanelTrail } from "@/lib/permissions";
 import type { Role } from "@/lib/permissions";
 import type { Order, OrderStatus, OrderType } from "@/types/order";
 
+import { KanbanBoard } from "./kanban-dnd";
 import { NewOrderModal, type LocationRow } from "./new-order-modal";
 import { OrderDrawer } from "./order-drawer";
 
@@ -29,19 +30,6 @@ function elapsedLabel(iso: string): string {
   }
   const h = Math.floor(m / 60);
   return `${h} h ${m % 60} min`;
-}
-
-function typeLabel(t: OrderType): string {
-  switch (t) {
-    case "dine_in":
-      return "Salón";
-    case "takeaway":
-      return "Take away";
-    case "delivery":
-      return "Delivery";
-    default:
-      return "Online";
-  }
 }
 
 type LocationApi = LocationRow & {
@@ -355,66 +343,14 @@ export function MesasOrdersClient({ tenantId, role }: MesasOrdersClientProps) {
       ) : null}
 
       {!loading && viewMode === "kanban" && kanbanStatuses.length > 0 ? (
-        <div className="flex min-h-[480px] gap-3 overflow-x-auto pb-2">
-          {kanbanStatuses.map((col) => {
-            const colOrders = filteredOrders.filter((o) => o.status_key === col.key);
-            const colTotal = colOrders.reduce((s, o) => s + o.total, 0);
-            return (
-              <div
-                key={col.id}
-                className="flex w-[280px] shrink-0 flex-col rounded-xl border border-border-subtle bg-surface/80"
-                style={{ maxHeight: "min(70dvh, 720px)" }}
-              >
-                <div className="shrink-0 border-b border-border-subtle px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Text className="text-sm font-semibold text-foreground">
-                      {col.label}
-                    </Text>
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: col.color }}
-                      aria-hidden
-                    />
-                  </div>
-                  <Text className="text-xs text-foreground-muted">
-                    {colOrders.length} órdenes · {money.format(colTotal)}
-                  </Text>
-                </div>
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-                  {colOrders.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      className="w-full rounded-lg border border-border-subtle bg-raised/50 p-3 text-start transition hover:bg-raised"
-                      onClick={() => openDrawer(o.id)}
-                    >
-                      <Text className="font-medium text-foreground">
-                        {o.location?.name ?? "Sin ubicación"}
-                      </Text>
-                      <span className="mt-1 inline-block rounded bg-background px-1.5 py-0.5 text-[10px] text-foreground-secondary">
-                        {typeLabel(o.type)}
-                      </span>
-                      {(o.customer_name || o.customer_id) ? (
-                        <Text className="mt-1 line-clamp-1 text-xs text-foreground-muted">
-                          {o.customer_name ?? "Cliente registrado"}
-                        </Text>
-                      ) : null}
-                      <Text className="mt-1 text-sm font-semibold text-foreground">
-                        {money.format(o.total)}
-                      </Text>
-                      <Text className="text-xs text-foreground-muted">
-                        {elapsedLabel(o.created_at)}
-                      </Text>
-                      <Text className="mt-2 line-clamp-2 text-xs text-foreground-secondary">
-                        {formatItemsSummary(o)}
-                      </Text>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <KanbanBoard
+          tenantId={tenantId}
+          statuses={statuses}
+          orders={filteredOrders}
+          role={role}
+          onOpenOrder={openDrawer}
+          onRefresh={() => void fetchAll({ silent: true })}
+        />
       ) : null}
 
       <OrderDrawer
@@ -423,6 +359,7 @@ export function MesasOrdersClient({ tenantId, role }: MesasOrdersClientProps) {
         open={drawerOrderId !== null}
         onClose={() => setDrawerOrderId(null)}
         statuses={statuses}
+        role={role}
         onChanged={() => void fetchAll({ silent: true })}
       />
 
@@ -531,12 +468,3 @@ function LocationTableCard({
   );
 }
 
-function formatItemsSummary(o: Order): string {
-  const names = o.items.slice(0, 3).map((i) => i.name);
-  const rest = o.items.length - 3;
-  const base = names.join(", ");
-  if (rest > 0) {
-    return `${base} y ${rest} más`;
-  }
-  return base || "Sin ítems";
-}

@@ -6,14 +6,18 @@ import {
   requireAdminOrSupervisor,
 } from "@/lib/api-tenant-session";
 import { pool } from "@/lib/db";
-import { addRecipeItem, createIngredient, ensureProductRecipe } from "@/lib/db/recipes";
+import { addRecipeItem, ensureProductRecipe } from "@/lib/db/recipes";
 import { unitTypeSchema } from "@/lib/recipes-api-schemas";
 import type { RowDataPacket } from "mysql2/promise";
 
 type Ctx = { params: Promise<{ tenantId: string; id: string }> };
 
+const uuidSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
 const bodySchema = z.object({
-  nombre: z.string().min(1).max(255),
+  ingredient_id: uuidSchema,
   cantidad: z.number().positive(),
   unidad: unitTypeSchema,
 });
@@ -37,10 +41,9 @@ export async function POST(request: Request, ctx: Ctx) {
       { status: 400 },
     );
   }
-  const { nombre, cantidad, unidad } = parsed.data;
+  const { ingredient_id, cantidad, unidad } = parsed.data;
 
   try {
-    // Get product name + current recipe_id
     const [prodRows] = await pool.query<RowDataPacket[]>(
       `SELECT name, recipe_id FROM products WHERE tenant_id = ? AND id = ? LIMIT 1`,
       [gate.tenantUuid, productId],
@@ -53,7 +56,15 @@ export async function POST(request: Request, ctx: Ctx) {
       recipe_id: string | null;
     };
 
-    // Ensure a recipe exists (creates one if needed)
+    // Verify the ingredient belongs to this tenant
+    const [ingRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM ingredients WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [ingredient_id, gate.tenantUuid],
+    );
+    if (!ingRows[0]) {
+      return NextResponse.json({ error: "Ingrediente no encontrado" }, { status: 404 });
+    }
+
     const recipeId = await ensureProductRecipe(
       gate.tenantUuid,
       productId,
@@ -61,18 +72,8 @@ export async function POST(request: Request, ctx: Ctx) {
       currentRecipeId,
     );
 
-    // Create new ingredient with cost 0 (user sets cost later from ingredients section)
-    const ingredient = await createIngredient(gate.tenantUuid, {
-      name: nombre.trim(),
-      unit: unidad,
-      unit_cost: 0,
-      stock_quantity: 0,
-      is_active: true,
-    });
-
-    // Add ingredient to recipe
     const item = await addRecipeItem(gate.tenantUuid, recipeId, {
-      ingredient_id: ingredient.id,
+      ingredient_id,
       quantity: cantidad,
       unit: unidad,
     });

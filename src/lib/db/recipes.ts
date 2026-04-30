@@ -392,7 +392,7 @@ export async function getRecipeById(
 }
 
 export type InlineRecipeIngredientLine = {
-  name: string;
+  ingredient_id: string;
   quantity: number;
   unit: UnitType;
 };
@@ -420,20 +420,12 @@ export async function createInlineRecipeForProductOnConn(
   );
 
   for (const line of lines) {
-    const ingId = crypto.randomUUID();
-    await conn.query<ResultSetHeader>(
-      `INSERT INTO ingredients (
-        id, tenant_id, branch_id, name, unit, unit_cost, stock_quantity,
-        stock_alert_threshold, supplier_id, is_active
-      ) VALUES (?, ?, NULL, ?, ?, 0, 0, NULL, NULL, TRUE)`,
-      [ingId, tenantId, line.name.trim(), line.unit],
-    );
     const itemId = crypto.randomUUID();
     await conn.query<ResultSetHeader>(
       `INSERT INTO recipe_items (
         id, tenant_id, recipe_id, ingredient_id, sub_recipe_id, quantity, unit, notes
       ) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL)`,
-      [itemId, tenantId, recipeId, ingId, line.quantity, line.unit],
+      [itemId, tenantId, recipeId, line.ingredient_id, line.quantity, line.unit],
     );
   }
   return recipeId;

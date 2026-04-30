@@ -2,13 +2,29 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import { pool } from "@/lib/db";
 import type {
+  BusinessHour,
+  BusinessHourSlot,
+  BusinessHoursWeek,
+  DayOfWeek,
   FeatureFlag,
   FeatureFlagKey,
   Tenant,
   UpdateTenantProfileInput,
+  UpsertBusinessHourInput,
 } from "@/types/tenant";
+import type { TenantTema } from "@/types/tema";
 
-export type { FeatureFlag, FeatureFlagKey, Tenant, UpdateTenantProfileInput };
+export type {
+  BusinessHour,
+  BusinessHoursWeek,
+  DayOfWeek,
+  FeatureFlag,
+  FeatureFlagKey,
+  Tenant,
+  TenantTema,
+  UpdateTenantProfileInput,
+  UpsertBusinessHourInput,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -240,4 +256,200 @@ export async function updateFeatureFlags(
   }
 
   return getFeatureFlags(tenantId);
+}
+
+// ---------------------------------------------------------------------------
+// getBusinessHours
+// ---------------------------------------------------------------------------
+
+export async function getBusinessHours(
+  tenantId: string,
+): Promise<BusinessHoursWeek> {
+  const [[dayRows], [slotRows]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(
+      `SELECT * FROM business_hours WHERE tenant_id = ? ORDER BY day_of_week ASC`,
+      [tenantId],
+    ),
+    pool.execute<RowDataPacket[]>(
+      `SELECT bhs.* FROM business_hour_slots bhs
+       JOIN business_hours bh ON bh.id = bhs.business_hour_id
+       WHERE bh.tenant_id = ?
+       ORDER BY bhs.business_hour_id, bhs.sort_order ASC`,
+      [tenantId],
+    ),
+  ]);
+
+  const slotsByHourId = slotRows.reduce(
+    (acc, slot) => {
+      const id = String(slot.business_hour_id);
+      if (!acc[id]) acc[id] = [];
+      acc[id].push({
+        id: String(slot.id),
+        business_hour_id: id,
+        open_time: String(slot.open_time).slice(0, 5),
+        close_time: String(slot.close_time).slice(0, 5),
+        sort_order: Number(slot.sort_order),
+      } as BusinessHourSlot);
+      return acc;
+    },
+    {} as Record<string, BusinessHourSlot[]>,
+  );
+
+  const existingDays = new Map(
+    dayRows.map((row) => [
+      row.day_of_week as DayOfWeek,
+      {
+        id: String(row.id),
+        tenant_id: tenantId,
+        day_of_week: row.day_of_week as DayOfWeek,
+        is_open: mapDbBool(row.is_open),
+        slots: slotsByHourId[String(row.id)] ?? [],
+      } as BusinessHour,
+    ]),
+  );
+
+  const week = {} as BusinessHoursWeek;
+  for (let d = 0; d <= 6; d++) {
+    const day = d as DayOfWeek;
+    week[day] = existingDays.get(day) ?? {
+      id: "",
+      tenant_id: tenantId,
+      day_of_week: day,
+      is_open: false,
+      slots: [],
+    };
+  }
+  return week;
+}
+
+// ---------------------------------------------------------------------------
+// upsertBusinessHour
+// ---------------------------------------------------------------------------
+
+export async function upsertBusinessHour(
+  tenantId: string,
+  data: UpsertBusinessHourInput,
+): Promise<BusinessHour> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [existing] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM business_hours
+       WHERE tenant_id = ? AND day_of_week = ? LIMIT 1`,
+      [tenantId, data.day_of_week],
+    );
+
+    let hourId: string;
+    if (existing.length > 0) {
+      hourId = String(existing[0]!.id);
+      await conn.execute(
+        `UPDATE business_hours SET is_open = ? WHERE id = ? AND tenant_id = ?`,
+        [data.is_open ? 1 : 0, hourId, tenantId],
+      );
+    } else {
+      hourId = crypto.randomUUID();
+      await conn.execute(
+        `INSERT INTO business_hours (id, tenant_id, day_of_week, is_open)
+         VALUES (?, ?, ?, ?)`,
+        [hourId, tenantId, data.day_of_week, data.is_open ? 1 : 0],
+      );
+    }
+
+    await conn.execute(
+      `DELETE FROM business_hour_slots WHERE business_hour_id = ? AND tenant_id = ?`,
+      [hourId, tenantId],
+    );
+
+    if (data.is_open && data.slots.length > 0) {
+      for (let i = 0; i < data.slots.length; i++) {
+        const slot = data.slots[i]!;
+        if (slot.open_time >= slot.close_time) {
+          throw new Error("El horario de apertura debe ser anterior al cierre");
+        }
+        await conn.execute(
+          `INSERT INTO business_hour_slots
+             (id, tenant_id, business_hour_id, open_time, close_time, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [crypto.randomUUID(), tenantId, hourId, slot.open_time, slot.close_time, i],
+        );
+      }
+    }
+
+    await conn.commit();
+
+    const hours = await getBusinessHours(tenantId);
+    return hours[data.day_of_week]!;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// getTenantTema
+// ---------------------------------------------------------------------------
+
+export async function getTenantTema(tenantId: string): Promise<TenantTema> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT color_primario, color_secundario, color_fondo, color_texto, color_links
+     FROM tenants WHERE id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const r = rows[0];
+  return {
+    colorPrimario: r?.color_primario ?? "#000000",
+    colorSecundario: r?.color_secundario ?? "#000000",
+    colorFondo: r?.color_fondo ?? "#ffffff",
+    colorTexto: r?.color_texto ?? "#000000",
+    colorLinks: r?.color_links ?? "#000000",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// getTenantTemaBySlug  (uso público sin autenticación)
+// ---------------------------------------------------------------------------
+
+export async function getTenantTemaBySlug(slug: string): Promise<TenantTema | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT color_primario, color_secundario, color_fondo, color_texto, color_links
+     FROM tenants WHERE slug = ? AND is_active = TRUE LIMIT 1`,
+    [slug],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    colorPrimario: r.color_primario ?? "#000000",
+    colorSecundario: r.color_secundario ?? "#000000",
+    colorFondo: r.color_fondo ?? "#ffffff",
+    colorTexto: r.color_texto ?? "#000000",
+    colorLinks: r.color_links ?? "#000000",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// updateTenantTema
+// ---------------------------------------------------------------------------
+
+export async function updateTenantTema(
+  tenantId: string,
+  data: TenantTema,
+): Promise<TenantTema> {
+  await pool.query<ResultSetHeader>(
+    `UPDATE tenants
+     SET color_primario = ?, color_secundario = ?, color_fondo = ?,
+         color_texto = ?, color_links = ?
+     WHERE id = ?`,
+    [
+      data.colorPrimario,
+      data.colorSecundario,
+      data.colorFondo,
+      data.colorTexto,
+      data.colorLinks,
+      tenantId,
+    ],
+  );
+  return getTenantTema(tenantId);
 }

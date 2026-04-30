@@ -142,6 +142,9 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
   const [submitting, setSubmitting] = useState(false);
   const [skuLocked, setSkuLocked] = useState(false);
   const [activeTab, setActiveTab] = useState<"general" | "sucursales">("general");
+  const [allIngredientOptions, setAllIngredientOptions] = useState<{ id: string; name: string; unit: string }[]>([]);
+  const [inlineSearches, setInlineSearches] = useState<Record<number, string>>({});
+  const [inlineDropdowns, setInlineDropdowns] = useState<Record<number, boolean>>({});
 
   const form = useForm<
     ProductoCreateFormInput,
@@ -278,6 +281,16 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
     };
     // form.reset es estable en react-hook-form; incluirlo re-disparaba la carga y borraba cambios del usuario.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al cambiar tenant o producto
+  }, [tenantId, productId]);
+
+  useEffect(() => {
+    if (productId) return; // edit mode uses IngredientesEdit's own loader
+    fetch(`/api/${tenantId}/ingredientes`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: { id: string; name: string; unit: string }[]) =>
+        setAllIngredientOptions(Array.isArray(data) ? data : []),
+      )
+      .catch(() => setAllIngredientOptions([]));
   }, [tenantId, productId]);
 
   const displayImageUrl = useMemo(
@@ -533,8 +546,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
 
         const inlineLines = (values.ingredientes_inline ?? []).filter(
           (row) =>
-            row.nombre &&
-            String(row.nombre).trim() !== "" &&
+            row.ingredient_id?.trim() &&
             row.cantidad != null &&
             row.cantidad > 0,
         );
@@ -578,7 +590,7 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
 
         if (inlineLines.length > 0) {
           body.inline_recipe_ingredients = inlineLines.map((row) => ({
-            name: String(row.nombre).trim(),
+            ingredient_id: row.ingredient_id!,
             quantity: row.cantidad!,
             unit: row.unidad,
           }));
@@ -1038,20 +1050,99 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                           key={row.id}
                           className="grid gap-2 rounded-lg border border-border-subtle bg-raised/40 p-3 sm:grid-cols-[1fr_100px_120px_auto]"
                         >
-                          <div className="flex flex-col gap-1">
-                            <Label htmlFor={`ing-nombre-${index}`}>Nombre</Label>
-                            <Input
-                              id={`ing-nombre-${index}`}
-                              variant="secondary"
-                              placeholder="Ej. Harina 000"
+                          {/* Ingredient selector */}
+                          <div className="relative flex flex-col gap-1">
+                            <Label htmlFor={`ing-search-${index}`}>Ingrediente</Label>
+                            <input
+                              id={`ing-search-${index}`}
+                              type="text"
+                              className="h-10 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
+                              placeholder="Buscar ingrediente..."
                               disabled={loadingMeta}
-                              {...form.register(`ingredientes_inline.${index}.nombre`)}
+                              value={inlineSearches[index] ?? ""}
+                              onChange={(e) => {
+                                setInlineSearches((p) => ({ ...p, [index]: e.target.value }));
+                                setInlineDropdowns((p) => ({ ...p, [index]: true }));
+                                form.setValue(`ingredientes_inline.${index}.ingredient_id`, "");
+                              }}
+                              onFocus={() =>
+                                setInlineDropdowns((p) => ({ ...p, [index]: true }))
+                              }
+                              onBlur={() =>
+                                setTimeout(
+                                  () =>
+                                    setInlineDropdowns((p) => ({ ...p, [index]: false })),
+                                  150,
+                                )
+                              }
                             />
-                            {errors.ingredientes_inline?.[index]?.nombre?.message ? (
-                              <FieldError>
-                                {errors.ingredientes_inline[index]?.nombre?.message}
-                              </FieldError>
-                            ) : null}
+                            {inlineDropdowns[index] && (
+                              <div
+                                className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border shadow-lg"
+                                style={{
+                                  background: "var(--background-surface)",
+                                  borderColor: "var(--border-default)",
+                                }}
+                              >
+                                {allIngredientOptions
+                                  .filter(
+                                    (i) =>
+                                      !(inlineSearches[index] ?? "") ||
+                                      i.name
+                                        .toLowerCase()
+                                        .includes(
+                                          (inlineSearches[index] ?? "").toLowerCase(),
+                                        ),
+                                  )
+                                  .slice(0, 12)
+                                  .map((ing) => (
+                                    <button
+                                      type="button"
+                                      key={ing.id}
+                                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-raised"
+                                      onMouseDown={() => {
+                                        form.setValue(
+                                          `ingredientes_inline.${index}.ingredient_id`,
+                                          ing.id,
+                                          { shouldValidate: true },
+                                        );
+                                        form.setValue(
+                                          `ingredientes_inline.${index}.unidad`,
+                                          ing.unit as "ml" | "l" | "g" | "kg" | "u" | "porciones",
+                                        );
+                                        setInlineSearches((p) => ({
+                                          ...p,
+                                          [index]: ing.name,
+                                        }));
+                                        setInlineDropdowns((p) => ({
+                                          ...p,
+                                          [index]: false,
+                                        }));
+                                      }}
+                                    >
+                                      <span className="truncate text-foreground">
+                                        {ing.name}
+                                      </span>
+                                      <span className="shrink-0 text-xs text-foreground-muted">
+                                        {ing.unit}
+                                      </span>
+                                    </button>
+                                  ))}
+                                {allIngredientOptions.filter(
+                                  (i) =>
+                                    !(inlineSearches[index] ?? "") ||
+                                    i.name
+                                      .toLowerCase()
+                                      .includes(
+                                        (inlineSearches[index] ?? "").toLowerCase(),
+                                      ),
+                                ).length === 0 && (
+                                  <p className="px-3 py-2 text-sm text-foreground-muted">
+                                    Sin resultados
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="flex flex-col gap-1">
                             <Label htmlFor={`ing-cant-${index}`}>Cantidad</Label>
@@ -1093,7 +1184,14 @@ export function ProductoCrearForm({ tenantId, productId }: ProductoCrearFormProp
                               variant="ghost"
                               isIconOnly
                               aria-label="Quitar ingrediente"
-                              onPress={() => removeIng(index)}
+                              onPress={() => {
+                                removeIng(index);
+                                setInlineSearches((p) => {
+                                  const next = { ...p };
+                                  delete next[index];
+                                  return next;
+                                });
+                              }}
                             >
                               <Trash2 className="size-4 text-danger" />
                             </Button>
@@ -1347,6 +1445,12 @@ type IngItemView = {
   unit: string;
 };
 
+type IngredientOption = {
+  id: string;
+  name: string;
+  unit: string;
+};
+
 const UNIDADES_EDIT = ["ml", "l", "g", "kg", "u", "porciones"] as const;
 
 function IngredientesEdit({
@@ -1373,7 +1477,10 @@ function IngredientesEdit({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showError, setShowError] = useState(false);
   // Add form
-  const [addNombre, setAddNombre] = useState("");
+  const [allIngredients, setAllIngredients] = useState<IngredientOption[]>([]);
+  const [addIngredientId, setAddIngredientId] = useState("");
+  const [addSearch, setAddSearch] = useState("");
+  const [addDropdownOpen, setAddDropdownOpen] = useState(false);
   const [addCantidad, setAddCantidad] = useState("1");
   const [addUnidad, setAddUnidad] = useState<string>("g");
   const [adding, setAdding] = useState(false);
@@ -1415,6 +1522,15 @@ function IngredientesEdit({
       void load(initialRecipeId);
     }
   }, [initialRecipeId, load]);
+
+  useEffect(() => {
+    fetch(`/api/${tenantId}/ingredientes`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: IngredientOption[]) =>
+        setAllIngredients(Array.isArray(data) ? data : []),
+      )
+      .catch(() => setAllIngredients([]));
+  }, [tenantId]);
 
   async function handleSave(item: IngItemView) {
     const qty = parseFloat(editQty[item.item_id] ?? "");
@@ -1470,28 +1586,32 @@ function IngredientesEdit({
   }
 
   async function handleAdd() {
-    const nombre = addNombre.trim();
-    const qty = parseFloat(addCantidad);
-    if (!nombre) {
-      setErrorMsg("El nombre del ingrediente no puede estar vacío.");
+    if (!addIngredientId) {
+      setErrorMsg("Seleccioná un ingrediente.");
       setShowError(true);
       return;
     }
+    const qty = parseFloat(addCantidad);
     if (!Number.isFinite(qty) || qty <= 0) {
       setErrorMsg("La cantidad debe ser un número positivo.");
       setShowError(true);
       return;
     }
+    const selectedIng = allIngredients.find((i) => i.id === addIngredientId);
     setAdding(true);
     try {
       const res = await fetch(`/api/${tenantId}/productos/${productId}/ingredientes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ nombre, cantidad: qty, unidad: addUnidad }),
+        body: JSON.stringify({
+          ingredient_id: addIngredientId,
+          cantidad: qty,
+          unidad: addUnidad,
+        }),
       });
       const j = (await res.json().catch(() => null)) as {
-        item?: { id: string; quantity: number; unit: string; ingredient?: { name: string } };
+        item?: { id: string; quantity: number; unit: string };
         recipe_id?: string;
         error?: string;
       } | null;
@@ -1500,7 +1620,6 @@ function IngredientesEdit({
         setShowError(true);
         return;
       }
-      // If a new recipe was created, notify parent
       if (j?.recipe_id && j.recipe_id !== recipeId) {
         setRecipeId(j.recipe_id);
         onRecipeCreated(j.recipe_id);
@@ -1508,8 +1627,8 @@ function IngredientesEdit({
       if (j?.item) {
         const newItem: IngItemView = {
           item_id: j.item.id,
-          ingredient_id: j.item.id,
-          name: nombre,
+          ingredient_id: addIngredientId,
+          name: selectedIng?.name ?? addIngredientId,
           quantity: j.item.quantity,
           unit: j.item.unit,
         };
@@ -1517,7 +1636,8 @@ function IngredientesEdit({
         setEditQty((prev) => ({ ...prev, [newItem.item_id]: String(newItem.quantity) }));
         setEditUnit((prev) => ({ ...prev, [newItem.item_id]: newItem.unit }));
       }
-      setAddNombre("");
+      setAddIngredientId("");
+      setAddSearch("");
       setAddCantidad("1");
       setAddUnidad("g");
     } finally {
@@ -1646,22 +1766,76 @@ function IngredientesEdit({
           )}
 
           {/* Add ingredient form */}
-          <div
-            className="flex flex-wrap items-end gap-3 rounded-xl border border-border-subtle bg-raised/40 p-3"
-          >
-            <div className="flex min-w-[160px] flex-1 flex-col gap-1">
-              <label className="text-xs font-medium text-foreground-secondary">Nombre</label>
+          <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border-subtle bg-raised/40 p-3">
+            {/* Ingredient selector */}
+            <div className="relative flex min-w-[200px] flex-1 flex-col gap-1">
+              <label className="text-xs font-medium text-foreground-secondary">
+                Ingrediente
+              </label>
               <input
                 type="text"
                 className="h-9 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
-                placeholder="Ej. Harina 000"
-                value={addNombre}
-                onChange={(e) => setAddNombre(e.target.value)}
+                placeholder="Buscar ingrediente..."
+                value={addSearch}
+                onChange={(e) => {
+                  setAddSearch(e.target.value);
+                  setAddIngredientId("");
+                  setAddDropdownOpen(true);
+                }}
+                onFocus={() => setAddDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setAddDropdownOpen(false), 150)}
                 disabled={adding}
               />
+              {addDropdownOpen && (
+                <div
+                  className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border shadow-lg"
+                  style={{
+                    background: "var(--background-surface)",
+                    borderColor: "var(--border-default)",
+                  }}
+                >
+                  {allIngredients
+                    .filter(
+                      (i) =>
+                        !addSearch ||
+                        i.name.toLowerCase().includes(addSearch.toLowerCase()),
+                    )
+                    .slice(0, 12)
+                    .map((ing) => (
+                      <button
+                        type="button"
+                        key={ing.id}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-sm transition-colors hover:bg-raised"
+                        onMouseDown={() => {
+                          setAddIngredientId(ing.id);
+                          setAddSearch(ing.name);
+                          setAddUnidad(ing.unit);
+                          setAddDropdownOpen(false);
+                        }}
+                      >
+                        <span className="truncate text-foreground">{ing.name}</span>
+                        <span className="shrink-0 text-xs text-foreground-muted">
+                          {ing.unit}
+                        </span>
+                      </button>
+                    ))}
+                  {allIngredients.filter(
+                    (i) =>
+                      !addSearch ||
+                      i.name.toLowerCase().includes(addSearch.toLowerCase()),
+                  ).length === 0 && (
+                    <p className="px-3 py-2 text-sm text-foreground-muted">
+                      Sin resultados
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+            {/* Quantity */}
             <div className="flex w-24 flex-col gap-1">
-              <label className="text-xs font-medium text-foreground-secondary">Cantidad</label>
+              <label className="text-xs font-medium text-foreground-secondary">
+                Cantidad
+              </label>
               <input
                 type="number"
                 inputMode="decimal"
@@ -1673,8 +1847,11 @@ function IngredientesEdit({
                 disabled={adding}
               />
             </div>
+            {/* Unit selector */}
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-foreground-secondary">Unidad</label>
+              <label className="text-xs font-medium text-foreground-secondary">
+                Unidad
+              </label>
               <select
                 className="h-9 rounded-lg border border-border-subtle bg-background px-3 text-sm text-foreground outline-none focus:border-accent"
                 value={addUnidad}
@@ -1682,7 +1859,9 @@ function IngredientesEdit({
                 disabled={adding}
               >
                 {UNIDADES_EDIT.map((u) => (
-                  <option key={u} value={u}>{u}</option>
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
                 ))}
               </select>
             </div>
@@ -1690,7 +1869,7 @@ function IngredientesEdit({
               type="button"
               size="sm"
               variant="secondary"
-              isDisabled={adding}
+              isDisabled={adding || !addIngredientId}
               onPress={() => void handleAdd()}
             >
               {adding ? (

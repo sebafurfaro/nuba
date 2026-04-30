@@ -2,6 +2,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/prom
 
 import { pool } from "@/lib/db";
 import {
+  calculateRecipeCost,
   deductStockFromOrderWithConnection,
 } from "@/lib/db/recipes";
 import type {
@@ -89,12 +90,14 @@ function orderTypeFromDb(raw: unknown): OrderType {
 
 function legacyStatusFromKey(key: string): string {
   switch (key) {
+    case "pedido":
     case "pending":
       return "pendiente";
     case "in_progress":
       return "en_proceso";
     case "ready":
       return "listo";
+    case "pagado":
     case "delivered":
     case "closed":
       return "entregado";
@@ -568,12 +571,16 @@ export async function createOrder(
     }
     const orderId = crypto.randomUUID();
     const dbType = orderTypeToDb(data.type);
+
+    const initialStatusKey = "pedido";
+    const initialStatusLegacy = legacyStatusFromKey(initialStatusKey);
+
     const [ins] = await conn.query<ResultSetHeader>(
       `INSERT INTO orders (
         id, tenant_id, location_id, branch_id, table_id, customer_id, user_id,
         status, status_key, customer_name, customer_phone, delivery_address,
         type, subtotal, discount, tax, total, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente', 'pending', ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?)`,
       [
         orderId,
         tenantId,
@@ -582,6 +589,8 @@ export async function createOrder(
         tableId,
         data.customer_id ?? null,
         userId,
+        initialStatusLegacy,
+        initialStatusKey,
         data.customer_name ?? null,
         data.customer_phone ?? null,
         data.delivery_address ?? null,
@@ -832,6 +841,90 @@ export async function removeOrderItem(
   }
 }
 
+export async function deleteOrder(
+  tenantId: string,
+  orderId: string,
+): Promise<void> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    // Verificar que la orden existe y no es terminal
+    const [ordRows] = await conn.query<RowDataPacket[]>(
+      `SELECT o.id FROM orders o
+       INNER JOIN order_statuses os
+         ON os.tenant_id = o.tenant_id AND os.\`key\` = o.status_key
+       WHERE o.id = ? AND o.tenant_id = ? AND os.is_terminal = FALSE
+       LIMIT 1`,
+      [orderId, tenantId],
+    );
+    if (!ordRows.length) {
+      throw new Error("Orden no encontrada o ya está en estado terminal");
+    }
+    await conn.query<ResultSetHeader>(
+      `DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?`,
+      [orderId, tenantId],
+    );
+    await conn.query<ResultSetHeader>(
+      `DELETE FROM orders WHERE id = ? AND tenant_id = ?`,
+      [orderId, tenantId],
+    );
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
+export async function snapshotOrderCosts(
+  tenantId: string,
+  orderId: string,
+): Promise<void> {
+  const [itemRows] = await pool.query<RowDataPacket[]>(
+    `SELECT oi.id, oi.product_id FROM order_items oi
+     WHERE oi.tenant_id = ? AND oi.order_id = ?`,
+    [tenantId, orderId],
+  );
+  if (!itemRows.length) {
+    return;
+  }
+  const recipeCache = new Map<string, number | null>();
+  for (const item of itemRows) {
+    const productId = item.product_id as string | null;
+    if (!productId) {
+      continue;
+    }
+    let unitCost: number | null = null;
+    if (!recipeCache.has(productId)) {
+      const [prodRows] = await pool.query<RowDataPacket[]>(
+        `SELECT recipe_id FROM products WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [productId, tenantId],
+      );
+      const recipeId = (prodRows[0]?.recipe_id as string | null) ?? null;
+      if (recipeId) {
+        try {
+          const costs = await calculateRecipeCost(tenantId, recipeId);
+          recipeCache.set(productId, costs.cost_per_portion);
+          unitCost = costs.cost_per_portion;
+        } catch {
+          recipeCache.set(productId, null);
+        }
+      } else {
+        recipeCache.set(productId, null);
+      }
+    } else {
+      unitCost = recipeCache.get(productId) ?? null;
+    }
+    if (unitCost !== null) {
+      await pool.query<ResultSetHeader>(
+        `UPDATE order_items SET unit_cost = ? WHERE id = ? AND tenant_id = ?`,
+        [unitCost, item.id as string, tenantId],
+      );
+    }
+  }
+}
+
 export async function closeOrder(
   tenantId: string,
   orderId: string,
@@ -853,15 +946,12 @@ export async function closeOrder(
     if (!ordRows.length) {
       throw new Error("Orden no encontrada o ya cerrada");
     }
-    const closed = await fetchOrderStatusByKey(conn, tenantId, "closed");
-    if (!closed) {
-      throw new Error("Estado 'closed' no configurado para este tenant");
-    }
-    const legacy = legacyStatusFromKey("closed");
+    const closedKey = "pagado";
+    const legacy = legacyStatusFromKey(closedKey);
     await conn.query<ResultSetHeader>(
-      `UPDATE orders SET status_key = 'closed', status = ?, updated_at = CURRENT_TIMESTAMP
+      `UPDATE orders SET status_key = ?, status = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ? AND tenant_id = ?`,
-      [legacy, orderId, tenantId],
+      [closedKey, legacy, orderId, tenantId],
     );
     const currency = paymentData.currency ?? "ARS";
     const metaJson =

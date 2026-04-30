@@ -16,7 +16,10 @@ import { Button as RacButton } from "react-aria-components";
 import { z } from "zod";
 
 import { DialogSuccess, DialogWarning } from "@/components/ui";
+import type { Role } from "@/lib/permissions";
 import type { Order, OrderItem, OrderStatus, OrderType } from "@/types/order";
+
+import { canMoveTo } from "./kanban-dnd";
 
 const money = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -63,6 +66,7 @@ export function OrderDrawer({
   open,
   onClose,
   statuses,
+  role,
   onChanged,
 }: {
   tenantId: string;
@@ -70,6 +74,7 @@ export function OrderDrawer({
   open: boolean;
   onClose: () => void;
   statuses: OrderStatus[];
+  role: Role;
   onChanged: () => void;
 }) {
   const [order, setOrder] = useState<Order | null>(null);
@@ -80,6 +85,7 @@ export function OrderDrawer({
   const [pickProductId, setPickProductId] = useState<string | null>(null);
   const [pickQty, setPickQty] = useState(1);
   const [pickVariantId, setPickVariantId] = useState<string>("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const payModal = useOverlayState();
 
   const loadOrder = useCallback(async () => {
@@ -118,16 +124,19 @@ export function OrderDrawer({
   }, [open, orderId, loadOrder]);
 
   const isTerminal = order?.status?.is_terminal === true;
+  const canChangeStatus = role === "admin" || role === "supervisor";
 
   const transitionStatuses = useMemo(() => {
-    return statuses.filter(
-      (s) =>
-        !s.is_terminal &&
-        s.key !== "closed" &&
-        s.key !== "cancelled" &&
-        s.key !== order?.status_key,
-    );
-  }, [statuses, order?.status_key]);
+    const currentStatus = order?.status;
+    return statuses.filter((s) => {
+      if (s.is_terminal) return false;
+      if (s.key === "closed" || s.key === "cancelled") return false;
+      if (s.key === order?.status_key) return false;
+      // Aplicar misma restricción de avance que el drag: no retroceder sort_order
+      if (currentStatus && !canMoveTo(currentStatus, s).allowed) return false;
+      return true;
+    });
+  }, [statuses, order?.status_key, order?.status]);
 
   const showProminentCobrar =
     order &&
@@ -159,6 +168,22 @@ export function OrderDrawer({
       setVariants(j.variants ?? []);
     })();
   }, [open, pickProductId, tenantId]);
+
+  async function handleDeleteOrder() {
+    if (!orderId) return;
+    const res = await fetch(`/api/${tenantId}/ordenes/${orderId}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => null)) as { error?: string };
+      toast.danger(j?.error ?? "No se pudo eliminar la orden");
+      return;
+    }
+    setDeleteConfirmOpen(false);
+    onChanged();
+    onClose();
+  }
 
   async function patchStatus(key: string) {
     if (!orderId) {
@@ -231,6 +256,15 @@ export function OrderDrawer({
 
   return (
     <>
+      <DialogWarning
+        isOpen={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        title="Eliminar orden"
+        description={`¿Querés eliminar la orden de "${order?.location?.name ?? "esta ubicación"}"? Esta acción no se puede deshacer.`}
+        confirmLabel="Sí, eliminar"
+        cancelLabel="Cancelar"
+        onConfirm={() => void handleDeleteOrder()}
+      />
       <div
         className="fixed inset-0 z-40 bg-[color:var(--nuba-scrim)] backdrop-blur-[2px] transition-opacity"
         aria-hidden
@@ -290,7 +324,7 @@ export function OrderDrawer({
                         {money.format(it.subtotal)}
                       </Text>
                     </div>
-                    {!isTerminal ? (
+                    {!isTerminal && canChangeStatus ? (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -307,7 +341,7 @@ export function OrderDrawer({
               </ul>
             ) : null}
 
-            {!isTerminal && order ? (
+            {!isTerminal && order && canChangeStatus ? (
               <div className="mt-4 rounded-lg border border-dashed border-border-subtle bg-background/80 p-3">
                 <Text className="mb-2 text-sm font-medium text-foreground">
                   Agregar producto
@@ -414,7 +448,7 @@ export function OrderDrawer({
               </div>
             ) : null}
 
-            {order && !isTerminal ? (
+            {order && !isTerminal && canChangeStatus && transitionStatuses.length > 0 ? (
               <div className="mb-3 flex flex-wrap gap-2">
                 {transitionStatuses.map((s) => (
                   <Button
@@ -435,19 +469,32 @@ export function OrderDrawer({
               </div>
             ) : null}
 
-            {order && !isTerminal ? (
-              <Button
-                size="md"
-                variant="primary"
-                className={
-                  showProminentCobrar
-                    ? "w-full bg-accent text-accent-text font-semibold"
-                    : "w-full"
-                }
-                onPress={() => payModal.open()}
-              >
-                Cobrar
-              </Button>
+            {order && !isTerminal && canChangeStatus ? (
+              <div className="flex gap-2">
+                <Button
+                  size="md"
+                  variant="ghost"
+                  isIconOnly
+                  className="shrink-0 text-danger hover:bg-danger-soft"
+                  aria-label="Eliminar orden"
+                  onPress={() => setDeleteConfirmOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+                <Button
+                  size="md"
+                  variant="primary"
+                  className={[
+                    "flex-1",
+                    showProminentCobrar
+                      ? "bg-accent text-accent-text font-semibold"
+                      : "",
+                  ].join(" ")}
+                  onPress={() => payModal.open()}
+                >
+                  Cobrar
+                </Button>
+              </div>
             ) : null}
           </footer>
         </div>

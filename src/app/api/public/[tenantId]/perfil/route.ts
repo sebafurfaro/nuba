@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2/promise";
 import { NextResponse } from "next/server";
 
 import { pool } from "@/lib/db";
+import { getBusinessHours } from "@/lib/db/tenant";
 import { getPublicTenant } from "@/lib/public-tenant";
 
 type Ctx = { params: Promise<{ tenantId: string }> };
@@ -15,24 +16,27 @@ export async function GET(_req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "Local no encontrado" }, { status: 404 });
     }
 
-    const [[tenantRows], [branchRows], [flagRows]] = await Promise.all([
-      pool.query<RowDataPacket[]>(
-        `SELECT name, description, logo_url, banner_url, email, phone, whatsapp,
-                website, instagram, facebook, tiktok, youtube
-         FROM tenants WHERE id = ? LIMIT 1`,
-        [tenant.id],
-      ),
-      pool.query<RowDataPacket[]>(
-        `SELECT id, name, address, city, phone, email
-         FROM branches WHERE tenant_id = ? AND is_active = TRUE
-         ORDER BY name ASC`,
-        [tenant.id],
-      ),
-      pool.query<RowDataPacket[]>(
-        `SELECT flag_key, is_enabled FROM feature_flags
-         WHERE tenant_id = ? AND flag_key IN ('enable_delivery')`,
-        [tenant.id],
-      ),
+    const [[[tenantRows], [branchRows], [flagRows]], hours] = await Promise.all([
+      Promise.all([
+        pool.query<RowDataPacket[]>(
+          `SELECT name, description, logo_url, banner_url, email, phone, whatsapp,
+                  website, instagram, facebook, tiktok, youtube
+           FROM tenants WHERE id = ? LIMIT 1`,
+          [tenant.id],
+        ),
+        pool.query<RowDataPacket[]>(
+          `SELECT id, name, address, city, phone, email
+           FROM branches WHERE tenant_id = ? AND is_active = TRUE
+           ORDER BY name ASC`,
+          [tenant.id],
+        ),
+        pool.query<RowDataPacket[]>(
+          `SELECT flag_key, is_enabled FROM feature_flags
+           WHERE tenant_id = ? AND flag_key IN ('enable_delivery')`,
+          [tenant.id],
+        ),
+      ]),
+      getBusinessHours(tenant.id),
     ]);
     const t = tenantRows[0];
     if (!t) {
@@ -66,6 +70,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       tiktok: t.tiktok ?? null,
       youtube: t.youtube ?? null,
       enable_delivery: flags["enable_delivery"] ?? false,
+      business_hours: hours,
       branches: branchRows.map((b) => ({
         id: String(b.id),
         name: String(b.name),

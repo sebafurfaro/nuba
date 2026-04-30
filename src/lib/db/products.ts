@@ -255,7 +255,7 @@ export async function getProductById(
 }
 
 export type InlineRecipeIngredientInput = {
-  name: string;
+  ingredient_id: string;
   quantity: number;
   unit: UnitType;
 };
@@ -364,7 +364,7 @@ export async function createProduct(
         tenantUuid,
         data.name,
         inline.map((row) => ({
-          name: row.name.trim(),
+          ingredient_id: row.ingredient_id,
           quantity: row.quantity,
           unit: row.unit,
         })),

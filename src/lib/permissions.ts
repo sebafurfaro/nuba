@@ -82,6 +82,7 @@ export function panelNavItemsForRole(
     { href: `${base}/usuarios`, label: "Usuarios", section: "usuarios" },
     { href: `${base}/sucursales`, label: "Sucursales", section: "sucursales" },
     { href: `${base}/calendario`, label: "Calendario", section: "calendario" },
+    { href: `${base}/caja`, label: "Caja", section: "caja" },
     {
       href: `${base}/proveedores`,
       label: "Proveedores",

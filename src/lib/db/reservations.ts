@@ -39,9 +39,21 @@ const STATUS_COLORS: Record<ReservationStatus, string> = {
 
 function addMinutes(date: string, time: string, minutes: number): string {
   const [h, m] = time.split(":").map(Number);
-  const base = new Date(`${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`);
-  base.setMinutes(base.getMinutes() + minutes);
-  return base.toISOString();
+  const totalMins = h * 60 + m + minutes;
+
+  let endDate = date;
+  let remaining = totalMins;
+
+  if (remaining >= 1440) {
+    remaining -= 1440;
+    const [y, mo, d] = date.split("-").map(Number);
+    const next = new Date(Date.UTC(y, mo - 1, d + 1));
+    endDate = next.toISOString().slice(0, 10);
+  }
+
+  const endH = Math.floor(remaining / 60);
+  const endM = remaining % 60;
+  return `${endDate}T${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}:00`;
 }
 
 function mapRow(r: RowDataPacket): Reservation {
@@ -169,7 +181,7 @@ export async function getReservationsForCalendar(
   return rows.map((r) => {
     const res = mapRow(r);
     const tableName = r.table_name ? String(r.table_name) : "Sin mesa";
-    const start = `${res.date}T${res.time}`;
+    const start = `${res.date}T${res.time}:00`;
     return {
       id: res.id,
       title: `${tableName} — ${res.customer_name} (${res.party_size} personas)`,

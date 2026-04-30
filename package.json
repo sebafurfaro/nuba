@@ -23,7 +23,8 @@
     "db:migrate-orders-status-key": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-orders-status-key.sql",
     "db:migrate-orders-customer-walkin": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-orders-customer-walkin-columns.sql",
     "db:migrate-customers-address-city": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-customers-address-city.sql",
-    "db:indexes": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-performance-indexes.sql"
+    "db:indexes": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-performance-indexes.sql",
+    "db:migrate-tenant-tema": "docker compose exec -T mysql mysql -h 127.0.0.1 -P 3306 -unuba_user -pnuba_pass nuba < scripts/migrate-tenant-tema.sql"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

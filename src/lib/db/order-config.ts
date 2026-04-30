@@ -299,6 +299,14 @@ export async function deleteLocationRow(
   return "ok";
 }
 
+/** Keys de sistema: siempre presentes, no se pueden eliminar ni cambiar is_terminal */
+export const PROTECTED_STATUS_KEYS = ["pedido", "pagado"] as const;
+export type ProtectedStatusKey = (typeof PROTECTED_STATUS_KEYS)[number];
+
+function isProtected(key: string): boolean {
+  return (PROTECTED_STATUS_KEYS as readonly string[]).includes(key);
+}
+
 export type CreateOrderStatusInput = {
   key: string;
   label: string;
@@ -346,6 +354,18 @@ export async function updateOrderStatusDefinition(
   statusId: string,
   patch: UpdateOrderStatusDefinitionInput,
 ): Promise<void> {
+  // Verificar si es un estado del sistema antes de permitir cambios estructurales
+  if (patch.is_terminal !== undefined || patch.triggers_stock !== undefined) {
+    const [keyRows] = await pool.query<RowDataPacket[]>(
+      `SELECT \`key\` FROM order_statuses WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [statusId, tenantId],
+    );
+    const key = String(keyRows[0]?.["key"] ?? "");
+    if (isProtected(key)) {
+      throw new Error(`El estado '${key}' es del sistema y no puede ser modificado`);
+    }
+  }
+
   const sets: string[] = [];
   const vals: unknown[] = [];
   if (patch.label !== undefined) {
@@ -364,6 +384,10 @@ export async function updateOrderStatusDefinition(
     sets.push("triggers_stock = ?");
     vals.push(patch.triggers_stock);
   }
+  if (patch.is_terminal !== undefined) {
+    sets.push("is_terminal = ?");
+    vals.push(patch.is_terminal);
+  }
   if (!sets.length) {
     return;
   }
@@ -381,7 +405,7 @@ export async function updateOrderStatusDefinition(
 export async function deleteOrderStatusRow(
   tenantId: string,
   statusId: string,
-): Promise<"ok" | "in_use" | "not_found"> {
+): Promise<"ok" | "in_use" | "not_found" | "protected"> {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT \`key\` FROM order_statuses WHERE id = ? AND tenant_id = ? LIMIT 1`,
     [statusId, tenantId],
@@ -391,6 +415,9 @@ export async function deleteOrderStatusRow(
     return "not_found";
   }
   const statusKey = String(row["key"]);
+  if (isProtected(statusKey)) {
+    return "protected";
+  }
   const [cnt] = await pool.query<RowDataPacket[]>(
     `SELECT COUNT(*) AS c FROM orders WHERE tenant_id = ? AND status_key = ?`,
     [tenantId, statusKey],

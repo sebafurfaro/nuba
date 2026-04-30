@@ -32,10 +32,15 @@ CREATE TABLE IF NOT EXISTS tenants (
   tiktok        VARCHAR(100)  NULL,
   youtube       VARCHAR(255)  NULL,
   facebook      VARCHAR(100)  NULL,
-  plan          ENUM('free','starter','pro','enterprise') NOT NULL DEFAULT 'free',
-  is_active     BOOLEAN       NOT NULL DEFAULT TRUE,
-  created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  plan              ENUM('free','starter','pro','enterprise') NOT NULL DEFAULT 'free',
+  is_active         BOOLEAN       NOT NULL DEFAULT TRUE,
+  color_primario    VARCHAR(7)    NOT NULL DEFAULT '#000000',
+  color_secundario  VARCHAR(7)    NOT NULL DEFAULT '#000000',
+  color_fondo       VARCHAR(7)    NOT NULL DEFAULT '#ffffff',
+  color_texto       VARCHAR(7)    NOT NULL DEFAULT '#000000',
+  color_links       VARCHAR(7)    NOT NULL DEFAULT '#000000',
+  created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -422,19 +427,60 @@ CREATE TABLE IF NOT EXISTS recipe_items (
 -- SUPPLIER PRODUCTS (qué provee cada proveedor y a qué costo)
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS supplier_products (
-  id            VARCHAR(36)     NOT NULL DEFAULT (UUID()),
-  tenant_id     VARCHAR(36)     NOT NULL,
-  supplier_id   VARCHAR(36)     NOT NULL,
-  product_id    VARCHAR(36)     NOT NULL,
-  cost_price    DECIMAL(12,2)   NOT NULL DEFAULT 0.00,
-  notes         TEXT            NULL,
-  created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+CREATE TABLE IF NOT EXISTS supplier_ingredients (
+  id                   VARCHAR(36)    NOT NULL DEFAULT (UUID()),
+  tenant_id            VARCHAR(36)    NOT NULL,
+  supplier_id          VARCHAR(36)    NOT NULL,
+  ingredient_id        VARCHAR(36)    NOT NULL,
+  purchase_unit        VARCHAR(100)   NOT NULL DEFAULT 'unidad',
+  purchase_qty         DECIMAL(10,3)  NOT NULL DEFAULT 1.000,
+  cost_per_purchase    DECIMAL(12,2)  NOT NULL DEFAULT 0.00,
+  unit_cost_calculated DECIMAL(12,2)  NOT NULL DEFAULT 0.00,
+  es_principal         BOOLEAN        NOT NULL DEFAULT FALSE,
+  initial_stock_qty    DECIMAL(10,3)  NULL     DEFAULT NULL,
+  notes                TEXT           NULL,
+  created_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_supplier_product (supplier_id, product_id),
-  CONSTRAINT fk_sp_tenant   FOREIGN KEY (tenant_id)   REFERENCES tenants(id)   ON DELETE CASCADE,
-  CONSTRAINT fk_sp_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
-  CONSTRAINT fk_sp_product  FOREIGN KEY (product_id)  REFERENCES products(id)  ON DELETE CASCADE
+  UNIQUE KEY uq_supplier_ingredient (supplier_id, ingredient_id),
+  CONSTRAINT fk_si_tenant      FOREIGN KEY (tenant_id)     REFERENCES tenants(id)      ON DELETE CASCADE,
+  CONSTRAINT fk_si_supplier    FOREIGN KEY (supplier_id)   REFERENCES suppliers(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_si_ingredient  FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)  ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- PURCHASE ORDERS (órdenes de compra a proveedores)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id            VARCHAR(36)    NOT NULL DEFAULT (UUID()),
+  tenant_id     VARCHAR(36)    NOT NULL,
+  supplier_id   VARCHAR(36)    NOT NULL,
+  status        ENUM('draft','sent','received','cancelled') NOT NULL DEFAULT 'draft',
+  expected_date DATE           NULL,
+  received_date DATE           NULL,
+  notes         TEXT           NULL,
+  total         DECIMAL(12,2)  NOT NULL DEFAULT 0.00,
+  created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_po_tenant (tenant_id),
+  INDEX idx_po_supplier (supplier_id),
+  CONSTRAINT fk_po_tenant   FOREIGN KEY (tenant_id)   REFERENCES tenants(id)   ON DELETE CASCADE,
+  CONSTRAINT fk_po_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id                VARCHAR(36)    NOT NULL DEFAULT (UUID()),
+  purchase_order_id VARCHAR(36)    NOT NULL,
+  ingredient_id     VARCHAR(36)    NOT NULL,
+  quantity          DECIMAL(10,3)  NOT NULL,
+  unit_price        DECIMAL(12,2)  NOT NULL,
+  subtotal          DECIMAL(12,2)  GENERATED ALWAYS AS (quantity * unit_price) STORED,
+  PRIMARY KEY (id),
+  INDEX idx_poi_order (purchase_order_id),
+  INDEX idx_poi_ingredient (ingredient_id),
+  CONSTRAINT fk_poi_order      FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  CONSTRAINT fk_poi_ingredient FOREIGN KEY (ingredient_id)     REFERENCES ingredients(id)     ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -526,6 +572,9 @@ CREATE TABLE IF NOT EXISTS orders (
   tax             DECIMAL(12,2)   NOT NULL DEFAULT 0.00,
   total           DECIMAL(12,2)   NOT NULL DEFAULT 0.00,
   notes           TEXT            NULL,
+  archived_at     DATETIME        NULL DEFAULT NULL,
+  archived_by     VARCHAR(36)     NULL DEFAULT NULL,
+  cash_register_id VARCHAR(36)    NULL DEFAULT NULL,
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -556,6 +605,7 @@ CREATE TABLE IF NOT EXISTS order_items (
   variant_id    VARCHAR(36)     NULL,
   name          VARCHAR(255)    NOT NULL,             -- snapshot del nombre al momento de venta
   unit_price    DECIMAL(12,2)   NOT NULL,
+  unit_cost     DECIMAL(12,2)   NULL DEFAULT NULL,    -- snapshot del costo al momento del cierre
   quantity      INT             NOT NULL DEFAULT 1,
   subtotal      DECIMAL(12,2)   NOT NULL,
   notes         TEXT            NULL,
@@ -592,6 +642,37 @@ CREATE TABLE IF NOT EXISTS payments (
   CONSTRAINT fk_payments_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   CONSTRAINT fk_payments_order  FOREIGN KEY (order_id)  REFERENCES orders(id)  ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- CASH REGISTERS (cierres de caja)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS cash_registers (
+  id               VARCHAR(36)   NOT NULL,
+  tenant_id        VARCHAR(36)   NOT NULL,
+  branch_id        VARCHAR(36)   NOT NULL,
+  cerrado_por      VARCHAR(36)   NOT NULL,
+  fecha_cierre     DATE          NOT NULL,
+  total_efectivo   DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  total_mp         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  total_otros      DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  total_general    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  cantidad_ordenes INT           NOT NULL DEFAULT 0,
+  notas            TEXT          NULL,
+  created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_cash_reg_branch (tenant_id, branch_id, fecha_cierre),
+  CONSTRAINT fk_cr_tenant FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
+  CONSTRAINT fk_cr_branch FOREIGN KEY (branch_id)   REFERENCES branches(id),
+  CONSTRAINT fk_cr_user   FOREIGN KEY (cerrado_por) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE orders
+  ADD CONSTRAINT fk_order_cash_register
+    FOREIGN KEY (cash_register_id) REFERENCES cash_registers(id);
+
+CREATE INDEX idx_orders_archived ON orders (tenant_id, archived_at);
+CREATE INDEX idx_orders_cash_reg ON orders (cash_register_id);
 
 -- ============================================================
 -- MP INTEGRATIONS (una cuenta MP por tenant)
@@ -690,6 +771,41 @@ CREATE TABLE IF NOT EXISTS tenant_blocked_dates (
   INDEX idx_tbd_tenant (tenant_id),
   CONSTRAINT fk_tbd_tenant FOREIGN KEY (tenant_id)
     REFERENCES tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- Franjas horarias de atención del tenant
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS business_hours (
+  id          VARCHAR(36)  NOT NULL DEFAULT (UUID()),
+  tenant_id   VARCHAR(36)  NOT NULL,
+  day_of_week TINYINT      NOT NULL, -- 0=Domingo, 1=Lunes ... 6=Sábado
+  is_open     BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+              ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tenant_day (tenant_id, day_of_week),
+  INDEX idx_bh_tenant (tenant_id),
+  CONSTRAINT fk_bh_tenant FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS business_hour_slots (
+  id               VARCHAR(36) NOT NULL DEFAULT (UUID()),
+  tenant_id        VARCHAR(36) NOT NULL,
+  business_hour_id VARCHAR(36) NOT NULL,
+  open_time        TIME        NOT NULL,
+  close_time       TIME        NOT NULL,
+  sort_order       TINYINT     NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  INDEX idx_bhs_tenant (tenant_id),
+  INDEX idx_bhs_hour   (business_hour_id),
+  CONSTRAINT fk_bhs_tenant FOREIGN KEY (tenant_id)
+    REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_bhs_hour FOREIGN KEY (business_hour_id)
+    REFERENCES business_hours(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

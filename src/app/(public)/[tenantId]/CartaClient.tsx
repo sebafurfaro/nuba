@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Clock,
   ExternalLink,
   Mail,
   MapPin,
@@ -13,6 +14,8 @@ import { useEffect, useState } from "react";
 
 import { ProductCard } from "./ProductCard";
 import type { PublicProduct } from "./ProductCard";
+import { DAY_NAMES } from "@/types/tenant";
+import type { BusinessHoursWeek, DayOfWeek } from "@/types/tenant";
 
 export type CartItem = {
   product_id: string;
@@ -58,6 +61,7 @@ export type PublicPerfil = {
   tiktok: string | null;
   youtube: string | null;
   enable_delivery: boolean;
+  business_hours: BusinessHoursWeek;
   branches: PublicBranch[];
 };
 
@@ -170,8 +174,8 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
     <div
       style={{
         minHeight: "100vh",
-        background: "var(--background)",
-        color: "var(--foreground)",
+        background: "var(--color-fondo, var(--background))",
+        color: "var(--color-texto, var(--foreground))",
         fontFamily: "inherit",
       }}
     >
@@ -269,8 +273,10 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
             padding: "6px 16px",
             borderRadius: 20,
             flexShrink: 0,
-            background: !activeCategoryId ? "var(--accent)" : "var(--background-raised)",
-            color: !activeCategoryId ? "var(--accent-text)" : "var(--foreground)",
+            background: !activeCategoryId
+              ? "var(--color-primario, var(--accent))"
+              : "var(--background-raised)",
+            color: !activeCategoryId ? "#ffffff" : "var(--color-texto, var(--foreground))",
             border: "none",
             cursor: "pointer",
             fontSize: 13,
@@ -289,9 +295,13 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
               borderRadius: 20,
               flexShrink: 0,
               background:
-                activeCategoryId === cat.id ? "var(--accent)" : "var(--background-raised)",
+                activeCategoryId === cat.id
+                  ? "var(--color-primario, var(--accent))"
+                  : "var(--background-raised)",
               color:
-                activeCategoryId === cat.id ? "var(--accent-text)" : "var(--foreground)",
+                activeCategoryId === cat.id
+                  ? "#ffffff"
+                  : "var(--color-texto, var(--foreground))",
               border: "none",
               cursor: "pointer",
               fontSize: 13,
@@ -447,8 +457,8 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
             onClick={() => router.push(`/${tenantId}/carrito`)}
             style={{
               pointerEvents: "all",
-              background: "var(--accent)",
-              color: "var(--accent-text)",
+              background: "var(--color-primario, var(--accent))",
+              color: "#ffffff",
               border: "none",
               borderRadius: 50,
               padding: "13px 24px",
@@ -550,7 +560,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                       alignItems: "center",
                       gap: 8,
                       fontSize: 13,
-                      color: "var(--foreground)",
+                      color: "var(--color-links, var(--foreground))",
                       textDecoration: "none",
                     }}
                   >
@@ -566,7 +576,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                       alignItems: "center",
                       gap: 8,
                       fontSize: 13,
-                      color: "var(--foreground)",
+                      color: "var(--color-links, var(--foreground))",
                       textDecoration: "none",
                     }}
                   >
@@ -584,7 +594,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                       alignItems: "center",
                       gap: 8,
                       fontSize: 13,
-                      color: "var(--foreground)",
+                      color: "var(--color-links, var(--foreground))",
                       textDecoration: "none",
                     }}
                   >
@@ -607,7 +617,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                         alignItems: "center",
                         gap: 4,
                         fontSize: 12,
-                        color: "var(--foreground-muted)",
+                        color: "var(--color-links, var(--foreground-muted))",
                         textDecoration: "none",
                       }}
                     >
@@ -629,7 +639,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                         alignItems: "center",
                         gap: 4,
                         fontSize: 12,
-                        color: "var(--foreground-muted)",
+                        color: "var(--color-links, var(--foreground-muted))",
                         textDecoration: "none",
                       }}
                     >
@@ -647,7 +657,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                         alignItems: "center",
                         gap: 4,
                         fontSize: 12,
-                        color: "var(--foreground-muted)",
+                        color: "var(--color-links, var(--foreground-muted))",
                         textDecoration: "none",
                       }}
                     >
@@ -669,7 +679,7 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
                         alignItems: "center",
                         gap: 4,
                         fontSize: 12,
-                        color: "var(--foreground-muted)",
+                        color: "var(--color-links, var(--foreground-muted))",
                         textDecoration: "none",
                       }}
                     >
@@ -681,6 +691,53 @@ export function CartaClient({ tenantId, perfil, categories, products }: Props) {
               </div>
             </div>
           )}
+
+          {/* Horarios de atención */}
+          {perfil.business_hours &&
+            Object.values(perfil.business_hours).some((d) => d.is_open) && (
+              <div>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    marginBottom: 12,
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                    letterSpacing: ".06em",
+                    color: "var(--foreground-muted)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Clock size={12} />
+                  Horarios
+                </div>
+                {([1, 2, 3, 4, 5, 6, 0] as DayOfWeek[]).map((day) => {
+                  const d = perfil.business_hours[day];
+                  if (!d?.is_open || !d.slots.length) return null;
+                  return (
+                    <div
+                      key={day}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 13,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span style={{ color: "var(--foreground-secondary)" }}>
+                        {DAY_NAMES[day]}
+                      </span>
+                      <span style={{ color: "var(--foreground)" }}>
+                        {d.slots
+                          .map((s) => `${s.open_time} – ${s.close_time}`)
+                          .join(" / ")}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
           {/* Columna por sucursal */}
           {perfil.branches.map((branch) => (

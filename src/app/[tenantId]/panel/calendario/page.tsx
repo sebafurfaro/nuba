@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import dynamic from "next/dynamic";
 import type FullCalendarType from "@fullcalendar/react";
+import type { EventInput } from "@fullcalendar/core";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import listPlugin from "@fullcalendar/list";
@@ -198,6 +199,22 @@ const FC_STYLES = `
   font-size: 1rem;
   font-weight: 600;
   color: var(--nuba-fg);
+}
+.fc-nuba .blocked-holiday-event {
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+}
+.fc-nuba .unlocked-holiday-event {
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  opacity: 0.8 !important;
+}
+.fc-nuba .fc-list-event.blocked-holiday-event .fc-list-event-title::before {
+  content: '🔒 ';
 }
 `;
 
@@ -694,11 +711,11 @@ export default function CalendarioPage() {
   // Blocked dates
   const [blockedDates, setBlockedDates] = useState<BlockedDate[]>([]);
 
-  // Unlock / relock dialogs
+  // Holiday modal
   const [selectedBlockedDate, setSelectedBlockedDate] =
     useState<BlockedDate | null>(null);
-  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
-  const [showRelockDialog, setShowRelockDialog] = useState(false);
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [holidayActionLoading, setHolidayActionLoading] = useState(false);
 
   // Branches for modal
   const [branches, setBranches] = useState<BranchOption[]>([]);
@@ -735,7 +752,7 @@ export default function CalendarioPage() {
   const [customerResults, setCustomerResults] = useState<CustomerOption[]>([]);
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
 
-  const calendarRef = useRef<FullCalendar>(null);
+  const calendarRef = useRef<FullCalendarType>(null);
 
   // ─── Form ──────────────────────────────────────────────────────────────────────
 
@@ -1011,7 +1028,7 @@ export default function CalendarioPage() {
   const fetchCalendarEvents = useCallback(
     (
       fetchInfo: { startStr: string; endStr: string },
-      successCallback: (events: unknown[]) => void,
+      successCallback: (events: EventInput[]) => void,
       failureCallback: (error: Error) => void,
     ) => {
       const dateFrom = fetchInfo.startStr.slice(0, 10);
@@ -1071,24 +1088,41 @@ export default function CalendarioPage() {
             .filter((f) => !f.is_unlocked)
             .map((f) => ({
               id: `blocked-${f.date}`,
+              title: `🔒 ${f.holiday_name ?? "Feriado"}`,
               start: f.date,
-              display: "background",
-              backgroundColor: "rgba(239, 68, 68, 0.15)",
-              classNames: ["blocked-day"],
-              extendedProps: { type: "blocked", blocked: f },
+              allDay: true,
+              display: "block",
+              backgroundColor: "#ef4444",
+              borderColor: "#dc2626",
+              textColor: "#ffffff",
+              classNames: ["blocked-holiday-event"],
+              extendedProps: {
+                type: "blocked",
+                blocked: f,
+                isHoliday: f.reason === "feriado",
+              },
             }));
 
-          const unlockedEvents = feriados
-            .filter((f) => f.is_unlocked)
+          const unlockedHolidayEvents = feriados
+            .filter((f) => f.is_unlocked && f.reason === "feriado")
             .map((f) => ({
               id: `unlocked-${f.date}`,
+              title: `🔓 ${f.holiday_name ?? "Feriado"}`,
               start: f.date,
-              display: "background",
-              backgroundColor: "rgba(251, 191, 36, 0.15)",
-              extendedProps: { type: "unlocked", blocked: f },
+              allDay: true,
+              display: "block",
+              backgroundColor: "#f59e0b",
+              borderColor: "#d97706",
+              textColor: "#ffffff",
+              classNames: ["unlocked-holiday-event"],
+              extendedProps: {
+                type: "unlocked",
+                blocked: f,
+                isHoliday: true,
+              },
             }));
 
-          successCallback([...reservas, ...blockedEvents, ...unlockedEvents]);
+          successCallback([...reservas, ...blockedEvents, ...unlockedHolidayEvents]);
         })
         .catch((e: Error) => failureCallback(e));
     },
@@ -1106,92 +1140,103 @@ export default function CalendarioPage() {
 
   function handleDateClick(info: { dateStr: string }) {
     const dateStr = info.dateStr;
-    const blocked = blockedDates.find((f) => f.date === dateStr);
+    const blockedDate = blockedDates.find(
+      (f) => f.date === dateStr && !f.is_unlocked,
+    );
+    const unlockedDate = blockedDates.find(
+      (f) => f.date === dateStr && f.is_unlocked && f.reason === "feriado",
+    );
 
-    if (blocked && !blocked.is_unlocked) {
-      setSelectedBlockedDate(blocked);
-      setShowUnlockDialog(true);
-    } else if (blocked?.is_unlocked) {
-      setSelectedBlockedDate(blocked);
-      setShowRelockDialog(true);
-    } else {
-      // Normal day — open create modal with pre-filled date
-      setEditingReservation(null);
-      form.reset({
-        customer_name: "",
-        customer_phone: "",
-        customer_email: "",
-        party_size: 2,
-        date: dateStr,
-        time: "20:00",
-        duration_min: 90,
-        branch_id: null,
-        table_id: null,
-        notes: "",
-        customer_id: null,
-      });
-      setAvailableTables([]);
-      setTablesReady(false);
-      setCustomerSearch("");
-      setCustomerResults([]);
-      modalState.open();
+    if (blockedDate) {
+      setSelectedBlockedDate(blockedDate);
+      setShowHolidayModal(true);
+      return;
     }
+
+    if (unlockedDate) {
+      setSelectedBlockedDate(unlockedDate);
+      setShowHolidayModal(true);
+      return;
+    }
+
+    // Normal day — open create modal with pre-filled date
+    setEditingReservation(null);
+    form.reset({
+      customer_name: "",
+      customer_phone: "",
+      customer_email: "",
+      party_size: 2,
+      date: dateStr,
+      time: "20:00",
+      duration_min: 90,
+      branch_id: null,
+      table_id: null,
+      notes: "",
+      customer_id: null,
+    });
+    setAvailableTables([]);
+    setTablesReady(false);
+    setCustomerSearch("");
+    setCustomerResults([]);
+    modalState.open();
   }
 
-  // ─── Unlock / relock ──────────────────────────────────────────────────────────
+  // ─── Holiday unlock / relock ──────────────────────────────────────────────────
 
-  async function confirmUnlock() {
-    if (!selectedBlockedDate) return;
-    setShowUnlockDialog(false);
-    const res = await fetch(
-      `/api/${tenantId}/feriados/${selectedBlockedDate.date}`,
-      {
+  async function handleUnlockDate(date: string) {
+    setHolidayActionLoading(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/feriados/${date}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ action: "unlock" }),
-      },
-    );
-    if (res.ok) {
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        setWarnMsg(j?.error ?? "No se pudo habilitar el día");
+        setWarnOpen(true);
+        return;
+      }
+      setShowHolidayModal(false);
+      setSelectedBlockedDate(null);
       setSuccessMsg({
-        title: "Día desbloqueado",
-        description: "El día quedó habilitado para recibir reservas.",
+        title: "Día habilitado",
+        description: "El feriado quedó habilitado para recibir reservas.",
       });
       setSuccessOpen(true);
       calendarRef.current?.getApi().refetchEvents();
-    } else {
-      const j = (await res.json().catch(() => null)) as { error?: string } | null;
-      setWarnMsg(j?.error ?? "No se pudo desbloquear el día");
-      setWarnOpen(true);
+    } finally {
+      setHolidayActionLoading(false);
     }
-    setSelectedBlockedDate(null);
   }
 
-  async function confirmRelock() {
-    if (!selectedBlockedDate) return;
-    setShowRelockDialog(false);
-    const res = await fetch(
-      `/api/${tenantId}/feriados/${selectedBlockedDate.date}`,
-      {
+  async function handleRelockDate(date: string) {
+    setHolidayActionLoading(true);
+    try {
+      const res = await fetch(`/api/${tenantId}/feriados/${date}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ action: "relock" }),
-      },
-    );
-    if (res.ok) {
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        setWarnMsg(j?.error ?? "No se pudo bloquear el día");
+        setWarnOpen(true);
+        return;
+      }
+      setShowHolidayModal(false);
+      setSelectedBlockedDate(null);
       setSuccessMsg({
-        title: "Día bloqueado",
+        title: "Feriado bloqueado",
         description: "El feriado volvió a estar bloqueado para reservas.",
       });
       setSuccessOpen(true);
       calendarRef.current?.getApi().refetchEvents();
-    } else {
-      const j = (await res.json().catch(() => null)) as { error?: string } | null;
-      setWarnMsg(j?.error ?? "No se pudo bloquear el día");
-      setWarnOpen(true);
+    } finally {
+      setHolidayActionLoading(false);
     }
-    setSelectedBlockedDate(null);
   }
 
   // ─── Conditional renders ────────────────────────────────────────────────────────
@@ -1261,30 +1306,182 @@ export default function CalendarioPage() {
         cancelLabel="Cerrar"
         onConfirm={() => setWarnOpen(false)}
       />
-      <DialogWarning
-        isOpen={showUnlockDialog}
-        onClose={() => {
-          setShowUnlockDialog(false);
-          setSelectedBlockedDate(null);
-        }}
-        title={`Desbloquear ${selectedBlockedDate?.holiday_name ?? selectedBlockedDate?.date ?? ""}`}
-        description="Este día está bloqueado como feriado. ¿Querés habilitarlo para recibir reservas?"
-        confirmLabel="Sí, desbloquear"
-        cancelLabel="Cancelar"
-        onConfirm={() => void confirmUnlock()}
-      />
-      <DialogWarning
-        isOpen={showRelockDialog}
-        onClose={() => {
-          setShowRelockDialog(false);
-          setSelectedBlockedDate(null);
-        }}
-        title={`¿Volver a bloquear ${selectedBlockedDate?.date ?? ""}?`}
-        description="Este feriado estaba desbloqueado. ¿Querés volver a bloquearlo para reservas?"
-        confirmLabel="Sí, bloquear"
-        cancelLabel="Cancelar"
-        onConfirm={() => void confirmRelock()}
-      />
+      {/* Holiday modal — unified block/unblock */}
+      {showHolidayModal && selectedBlockedDate && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowHolidayModal(false);
+              setSelectedBlockedDate(null);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-xl border shadow-2xl"
+            style={{
+              background: "var(--background-surface)",
+              borderColor: "var(--border-default)",
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center gap-2 border-b px-5 py-4"
+              style={{ borderColor: "var(--border-subtle)" }}
+            >
+              <span style={{ fontSize: 20 }}>
+                {selectedBlockedDate.is_unlocked ? "🔓" : "🔒"}
+              </span>
+              <span className="text-base font-semibold text-foreground">
+                {selectedBlockedDate.is_unlocked
+                  ? "Feriado habilitado"
+                  : "Feriado bloqueado"}
+              </span>
+            </div>
+
+            {/* Body */}
+            <div className="flex flex-col gap-3 px-5 py-4">
+              <p className="text-sm font-semibold text-foreground">
+                {selectedBlockedDate.holiday_name ?? "Feriado nacional"}
+              </p>
+              <p className="text-xs text-foreground-muted">
+                {new Date(selectedBlockedDate.date + "T12:00:00").toLocaleDateString(
+                  "es-AR",
+                  {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  },
+                )}
+              </p>
+              {selectedBlockedDate.holiday_type && (
+                <span
+                  className="inline-block self-start rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  style={{
+                    background: "var(--background-raised)",
+                    color: "var(--foreground-secondary)",
+                  }}
+                >
+                  {selectedBlockedDate.holiday_type}
+                </span>
+              )}
+              <p
+                className="mt-1 text-xs leading-relaxed"
+                style={{ color: "var(--foreground-secondary)" }}
+              >
+                {selectedBlockedDate.is_unlocked
+                  ? "Este feriado está habilitado para recibir reservas. ¿Querés volver a bloquearlo?"
+                  : "Este día está bloqueado. No se pueden crear reservas. ¿Querés habilitarlo para recibir reservas?"}
+              </p>
+              {selectedBlockedDate.is_unlocked && (
+                <div
+                  className="rounded-lg p-2.5 text-xs leading-relaxed"
+                  style={{
+                    background: "var(--accent-soft)",
+                    color: "var(--foreground-secondary)",
+                  }}
+                >
+                  Como el día está habilitado, también podés crear una reserva
+                  directamente.
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              className="flex justify-end gap-2 border-t px-5 py-4"
+              style={{ borderColor: "var(--border-subtle)" }}
+            >
+              <button
+                type="button"
+                className="rounded-lg border px-4 py-2 text-sm transition-colors hover:bg-raised"
+                style={{
+                  borderColor: "var(--border-default)",
+                  color: "var(--foreground-secondary)",
+                }}
+                onClick={() => {
+                  setShowHolidayModal(false);
+                  setSelectedBlockedDate(null);
+                }}
+              >
+                Cancelar
+              </button>
+
+              {selectedBlockedDate.is_unlocked && (
+                <button
+                  type="button"
+                  disabled={holidayActionLoading}
+                  className="rounded-lg border px-4 py-2 text-sm transition-colors hover:bg-raised disabled:opacity-50"
+                  style={{
+                    borderColor: "var(--border-default)",
+                    background: "var(--background-raised)",
+                    color: "var(--foreground)",
+                  }}
+                  onClick={() => void handleRelockDate(selectedBlockedDate.date)}
+                >
+                  {holidayActionLoading ? "Bloqueando..." : "🔒 Volver a bloquear"}
+                </button>
+              )}
+
+              {selectedBlockedDate.is_unlocked && (
+                <button
+                  type="button"
+                  className="rounded-lg px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
+                  style={{
+                    background: "var(--accent)",
+                    color: "var(--accent-text)",
+                  }}
+                  onClick={() => {
+                    setShowHolidayModal(false);
+                    const date = selectedBlockedDate.date;
+                    setSelectedBlockedDate(null);
+                    setEditingReservation(null);
+                    form.reset({
+                      customer_name: "",
+                      customer_phone: "",
+                      customer_email: "",
+                      party_size: 2,
+                      date,
+                      time: "20:00",
+                      duration_min: 90,
+                      branch_id: null,
+                      table_id: null,
+                      notes: "",
+                      customer_id: null,
+                    });
+                    setAvailableTables([]);
+                    setTablesReady(false);
+                    setCustomerSearch("");
+                    setCustomerResults([]);
+                    modalState.open();
+                  }}
+                >
+                  Crear reserva
+                </button>
+              )}
+
+              {!selectedBlockedDate.is_unlocked && (
+                <button
+                  type="button"
+                  disabled={holidayActionLoading}
+                  className="rounded-lg px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
+                  style={{
+                    background: "var(--accent)",
+                    color: "var(--accent-text)",
+                  }}
+                  onClick={() => void handleUnlockDate(selectedBlockedDate.date)}
+                >
+                  {holidayActionLoading
+                    ? "Habilitando..."
+                    : "🔓 Habilitar para reservas"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Drawer backdrop */}
       {drawerOpen && (
@@ -1371,10 +1568,16 @@ export default function CalendarioPage() {
               }}
               events={fetchCalendarEvents}
               eventClick={(arg) => {
-                // Only open drawer for actual reservation events
-                if (arg.event.extendedProps?.type === "blocked" || arg.event.extendedProps?.type === "unlocked") return;
-                const r = arg.event.extendedProps as Reservation;
-                openDrawer(r);
+                const props = arg.event.extendedProps as {
+                  type?: string;
+                  blocked?: BlockedDate;
+                };
+                if (props.type === "blocked" || props.type === "unlocked") {
+                  setSelectedBlockedDate(props.blocked ?? null);
+                  setShowHolidayModal(true);
+                  return;
+                }
+                openDrawer(arg.event.extendedProps as Reservation);
               }}
               dateClick={handleDateClick}
               height="auto"
@@ -1400,11 +1603,11 @@ export default function CalendarioPage() {
                     width: 12,
                     height: 12,
                     borderRadius: 2,
-                    background: "rgba(239,68,68,0.3)",
+                    background: "#ef4444",
                     flexShrink: 0,
                   }}
                 />
-                Día bloqueado
+                🔒 Feriado bloqueado
               </span>
               <span className="flex items-center gap-1.5">
                 <span
@@ -1413,11 +1616,11 @@ export default function CalendarioPage() {
                     width: 12,
                     height: 12,
                     borderRadius: 2,
-                    background: "rgba(251,191,36,0.3)",
+                    background: "#f59e0b",
                     flexShrink: 0,
                   }}
                 />
-                Feriado desbloqueado
+                🔓 Feriado habilitado
               </span>
               <span className="flex items-center gap-1.5">
                 <span
@@ -1426,7 +1629,7 @@ export default function CalendarioPage() {
                     width: 12,
                     height: 12,
                     borderRadius: 2,
-                    background: "rgba(16,185,129,0.3)",
+                    background: "#10b981",
                     flexShrink: 0,
                   }}
                 />
